@@ -132,11 +132,13 @@
     .feed-meta a:hover { color: #999; text-decoration: underline; }
 
     .feed-vibes {
-      display: flex;
+      display: none;
       gap: 4px;
       margin-top: 6px;
       flex-wrap: wrap;
     }
+
+    .feed-vibes.expanded { display: flex; }
 
     .vibe-tag {
       background: #161625;
@@ -147,6 +149,18 @@
       font-weight: 500;
       letter-spacing: 0.2px;
     }
+
+    .vibes-toggle {
+      background: none;
+      border: none;
+      color: #555;
+      font-size: 11px;
+      cursor: pointer;
+      padding: 0;
+      margin-left: 4px;
+    }
+
+    .vibes-toggle:hover { color: #7b7bdd; }
 
     /* Right side: price + save inline */
     .feed-right {

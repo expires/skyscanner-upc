@@ -218,41 +218,17 @@ function handleSlideChange(): void {
   }, SLIDE_DEBOUNCE_MS);
 }
 
-// --- Video tick (screenshot every VIDEO_TICK_MS) ---
-
-function isVideoPlaying(): boolean {
-  const video = document.querySelector("video");
-  if (!video) return false;
-  return !video.paused && !video.ended && video.readyState > 2;
-}
+// --- Video tick — simple 1s interval ---
 
 function startVideoTickIfNeeded(): void {
-  // Small delay to let the video element load
-  setTimeout(() => {
-    if (!isVideoPlaying()) {
-      console.debug("[Roam] No active video, skipping tick");
-      return;
-    }
+  stopVideoTick();
 
-    console.log("[Roam] Video detected, starting periodic capture");
-    let tickCount = 0;
-    const MAX_TICKS = 8; // Cap at 8 seconds per video to limit API calls
-
-    videoTickInterval = setInterval(() => {
-      tickCount++;
-      if (tickCount > MAX_TICKS || !isVideoPlaying()) {
-        console.debug("[Roam] Stopping video tick (count:", tickCount, ")");
-        stopVideoTick();
-        return;
-      }
-
-      const payload = extractContent();
-      if (!payload) return;
-      payload.trigger = "video_tick";
-      // Always send — the screenshot will be different each tick
-      sendPayload(payload);
-    }, VIDEO_TICK_MS);
-  }, 500);
+  videoTickInterval = setInterval(() => {
+    const payload = extractContent();
+    if (!payload) return;
+    payload.trigger = "video_tick";
+    sendPayload(payload);
+  }, VIDEO_TICK_MS);
 }
 
 function stopVideoTick(): void {

@@ -1,10 +1,14 @@
+export interface DestinationHit {
+  destination: string;
+  country: string;
+  countryCode: string;
+  airportCode: string;
+  vibes: string[];
+}
+
 export interface DetectionResult {
   isTravel: boolean;
-  destination: string | null;
-  country: string | null;
-  countryCode: string | null;
-  airportCode: string | null;
-  vibes: string[];
+  destinations: DestinationHit[];
 }
 
 export interface FlightResult {

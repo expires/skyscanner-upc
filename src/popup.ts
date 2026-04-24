@@ -104,6 +104,7 @@ function renderFeedItem(
       <div class="feed-meta">
         ${entry.country} &middot; ${timeAgo(entry.detectedAt)}
         &middot; <a href="${entry.sourceUrl}" target="_blank">source</a>
+        ${entry.vibes.length > 0 ? `<button class="vibes-toggle">${entry.vibes.length} tags</button>` : ""}
       </div>
       <div class="feed-vibes">${vibesHtml}</div>
     </div>
@@ -119,16 +120,29 @@ function renderFeedItem(
     ${loadingHtml}
   `;
 
+  // Toggle vibes
+  const toggle = item.querySelector(".vibes-toggle");
+  const vibesEl = item.querySelector(".feed-vibes");
+  if (toggle && vibesEl) {
+    toggle.addEventListener("click", () => {
+      vibesEl.classList.toggle("expanded");
+      (toggle as HTMLElement).textContent = vibesEl.classList.contains("expanded")
+        ? "hide tags"
+        : `${entry.vibes.length} tags`;
+    });
+  }
+
   return item;
 }
 
 async function renderFeed(): Promise<void> {
-  const stored = await chrome.storage.local.get(["detections", "wishlist", "loadingDestination"]);
+  const stored = await chrome.storage.local.get(["detections", "wishlist", "loadingDestinations"]);
   const detections: DetectedEntry[] = stored.detections ?? [];
   const wishlist: WishlistEntry[] = stored.wishlist ?? [];
-  const loadingDest: string | null = stored.loadingDestination ?? null;
+  const loadingDests: string[] = stored.loadingDestinations ?? [];
 
   const savedSet = new Set(wishlist.map((w) => w.destination.toLowerCase()));
+  const loadingSet = new Set(loadingDests.map((d: string) => d.toLowerCase()));
 
   if (detections.length === 0) {
     feedEmpty.style.display = "block";
@@ -144,7 +158,7 @@ async function renderFeed(): Promise<void> {
 
   detections.forEach((entry) => {
     const isSaved = savedSet.has(entry.destination.toLowerCase());
-    const isLoading = loadingDest?.toLowerCase() === entry.destination.toLowerCase();
+    const isLoading = loadingSet.has(entry.destination.toLowerCase());
     const item = renderFeedItem(entry, isSaved, isLoading);
     feedList.appendChild(item);
   });
@@ -230,6 +244,7 @@ async function renderSaved(): Promise<void> {
         <div class="feed-meta">
           ${entry.country}
           &middot; <a href="${entry.sourceUrl}" target="_blank">source</a>
+          ${entry.vibes.length > 0 ? `<button class="vibes-toggle">${entry.vibes.length} tags</button>` : ""}
         </div>
         <div class="feed-vibes">${vibesHtml}</div>
       </div>
@@ -241,6 +256,17 @@ async function renderSaved(): Promise<void> {
         ${savedDetailHtml}
       </div>
     `;
+
+    const toggle = item.querySelector(".vibes-toggle");
+    const vibesEl = item.querySelector(".feed-vibes");
+    if (toggle && vibesEl) {
+      toggle.addEventListener("click", () => {
+        vibesEl.classList.toggle("expanded");
+        (toggle as HTMLElement).textContent = vibesEl.classList.contains("expanded")
+          ? "hide tags"
+          : `${entry.vibes.length} tags`;
+      });
+    }
 
     savedList.appendChild(item);
   });
@@ -276,7 +302,7 @@ btnSaveSettings.addEventListener("click", async () => {
 // --- Live updates ---
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local") return;
-  if (changes.detections || changes.loadingDestination) renderFeed();
+  if (changes.detections || changes.loadingDestinations) renderFeed();
 });
 
 // --- Init ---
