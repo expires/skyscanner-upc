@@ -11,6 +11,7 @@ export interface FlightResult {
   price: number;
   currency: string;
   airline: string;
+  durationMinutes: number;
   deeplink: string;
 }
 

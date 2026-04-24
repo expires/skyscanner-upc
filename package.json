@@ -1,7 +1,7 @@
 {
-  "name": "wander-extension",
+  "name": "roam-extension",
   "version": "0.1.0",
-  "description": "Passive travel intent detection powered by AI",
+  "description": "Roam, powered by Skyscanner",
   "scripts": {
     "build": "tsc && tsc -p tsconfig.content.json",
     "watch": "tsc --watch & tsc -p tsconfig.content.json --watch"

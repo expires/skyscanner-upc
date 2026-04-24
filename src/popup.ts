@@ -19,6 +19,15 @@ function timeAgo(ts: number): string {
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
+function formatDuration(mins: number): string {
+  if (!mins || mins <= 0) return "";
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  if (h === 0) return `${m}m`;
+  if (m === 0) return `${h}h`;
+  return `${h}h ${m}m`;
+}
+
 const $ = <T extends HTMLElement>(id: string) =>
   document.getElementById(id) as T;
 
@@ -78,8 +87,10 @@ function renderFeedItem(
     priceHtml = "";
   }
 
-  const airlineHtml = entry.flight
-    ? `<span class="feed-airline">${entry.flight.airline}</span>`
+  const dur = entry.flight ? formatDuration(entry.flight.durationMinutes) : "";
+  const detailParts = [entry.flight?.airline, dur].filter(Boolean).join(" · ");
+  const detailHtml = detailParts
+    ? `<span class="feed-airline">${detailParts}</span>`
     : "";
 
   const loadingHtml = isLoading
@@ -103,7 +114,7 @@ function renderFeedItem(
           ${isSaved ? "&#10003;" : "&#9734;"}
         </button>
       </div>
-      ${airlineHtml}
+      ${detailHtml}
     </div>
     ${loadingHtml}
   `;
@@ -206,8 +217,10 @@ async function renderSaved(): Promise<void> {
          </a>`
       : "";
 
-    const airlineHtml = entry.flight
-      ? `<span class="feed-airline">${entry.flight.airline}</span>`
+    const dur = entry.flight ? formatDuration(entry.flight.durationMinutes) : "";
+    const detailParts = [entry.flight?.airline, dur].filter(Boolean).join(" · ");
+    const savedDetailHtml = detailParts
+      ? `<span class="feed-airline">${detailParts}</span>`
       : "";
 
     item.innerHTML = `
@@ -225,7 +238,7 @@ async function renderSaved(): Promise<void> {
           ${priceHtml}
           <button class="wishlist-remove" data-id="${entry.id}" title="Remove">&times;</button>
         </div>
-        ${airlineHtml}
+        ${savedDetailHtml}
       </div>
     `;
 

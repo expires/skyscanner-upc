@@ -1,10 +1,10 @@
-# Wander — Browser Extension
+# Roam — Browser Extension
 
-> Passive travel intent detection for TikTok and Instagram web. Powered by Claude AI + Skyscanner.
+> Roam, powered by Skyscanner — passive travel intent detection for TikTok and Instagram web.
 
 ## What It Does
 
-Wander runs in the background while you scroll social media. When it detects travel content, it extracts the destination and surfaces live flight prices — without you leaving the page or opening another app.
+Roam runs in the background while you scroll social media. When it detects travel content, it extracts the destination and surfaces live flight prices — without you leaving the page or opening another app.
 
 No forms. No chatbots. No friction.
 
@@ -43,7 +43,7 @@ Saved destinations stored in chrome.storage.local
 ## File Structure
 
 ```
-wander-extension/
+roam-extension/
 ├── manifest.json          # Manifest V3 config
 ├── popup.html             # Extension popup UI
 ├── tsconfig.json          # TypeScript config
@@ -138,7 +138,7 @@ interface WishlistEntry {
 ```json
 {
   "manifest_version": 3,
-  "name": "Wander",
+  "name": "Roam",
   "version": "0.1.0",
   "description": "Passive travel intent detection powered by AI",
   "permissions": ["storage", "activeTab"],
@@ -159,7 +159,7 @@ interface WishlistEntry {
   }],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Wander"
+    "default_title": "Roam"
   }
 }
 ```

@@ -1,4 +1,4 @@
-# Wander — Implementation Context & Findings
+# Roam — Implementation Context & Findings
 
 ## Architecture Decisions
 

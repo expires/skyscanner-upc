@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Wander",
+  "name": "Roam",
   "version": "0.1.0",
-  "description": "Passive travel intent detection powered by AI",
+  "description": "Roam, powered by Skyscanner — passive travel intent detection",
   "permissions": ["storage", "activeTab", "tabs"],
   "host_permissions": [
     "https://www.tiktok.com/*",
@@ -26,6 +26,6 @@
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Wander"
+    "default_title": "Roam"
   }
 }

@@ -50,7 +50,7 @@ async function captureTab(windowId: number): Promise<string | null> {
     // dataUrl is "data:image/jpeg;base64,..." — extract the base64 part
     return dataUrl.split(",")[1] ?? null;
   } catch (e) {
-    console.warn("[Wander BG] Tab capture failed:", e);
+    console.warn("[Roam BG] Tab capture failed:", e);
     return null;
   }
 }
@@ -159,12 +159,12 @@ async function searchFlights(
 
     if (!createRes.ok) {
       const errBody = await createRes.text();
-      console.warn("[Wander BG] Skyscanner create error", createRes.status, errBody);
+      console.warn("[Roam BG] Skyscanner create error", createRes.status, errBody);
       return null;
     }
 
     let data = await createRes.json();
-    console.log("[Wander BG] Skyscanner create status:", data.status);
+    console.log("[Roam BG] Skyscanner create status:", data.status);
 
     // Step 2: Poll if incomplete
     const sessionToken = data.sessionToken;
@@ -172,7 +172,7 @@ async function searchFlights(
     while (data.status === "RESULT_STATUS_INCOMPLETE" && polls < MAX_POLLS && sessionToken) {
       await new Promise((r) => setTimeout(r, POLL_DELAY_MS));
       polls++;
-      console.log(`[Wander BG] Skyscanner polling (${polls}/${MAX_POLLS})...`);
+      console.log(`[Roam BG] Skyscanner polling (${polls}/${MAX_POLLS})...`);
 
       const pollRes = await fetch(`${SKYSCANNER_BASE}/poll/${sessionToken}`, {
         method: "POST",
@@ -182,46 +182,70 @@ async function searchFlights(
 
       if (!pollRes.ok) break;
       data = await pollRes.json();
-      console.log("[Wander BG] Skyscanner poll status:", data.status);
+      console.log("[Roam BG] Skyscanner poll status:", data.status);
     }
 
     const result = parseSkyscannerResult(data, homeAirport, destAirport);
     if (!result) {
-      console.warn("[Wander BG] No flights found for route", homeAirport, "→", destAirport);
+      console.warn("[Roam BG] No flights found for route", homeAirport, "→", destAirport);
     }
     return result;
   } catch (e) {
-    console.warn("[Wander BG] Skyscanner fetch failed:", e);
+    console.warn("[Roam BG] Skyscanner fetch failed:", e);
     return null;
   }
+}
+
+function getItineraryPrice(itin: any): number {
+  const raw = parseFloat(itin.pricingOptions?.[0]?.price?.amount ?? "Infinity");
+  return raw > 1000 ? raw / 1000 : raw;
+}
+
+function getItineraryDuration(itin: any, legs: any): number {
+  const legId = itin.legIds?.[0];
+  if (!legId || !legs?.[legId]) return Infinity;
+  return legs[legId].durationInMinutes ?? Infinity;
 }
 
 function parseSkyscannerResult(data: any, origin: string, dest: string): FlightResult | null {
   const itineraries = data?.content?.results?.itineraries;
   if (!itineraries) return null;
 
+  const legs = data?.content?.results?.legs;
+  const carriers = data?.content?.results?.carriers;
+
   const entries = Object.values(itineraries) as any[];
   if (entries.length === 0) return null;
 
-  // Sort by cheapest price
-  entries.sort(
-    (a: any, b: any) =>
-      parseFloat(a.pricingOptions?.[0]?.price?.amount ?? "Infinity") -
-      parseFloat(b.pricingOptions?.[0]?.price?.amount ?? "Infinity")
-  );
+  // "Best" ranking: normalise price and duration then combine.
+  // Lower score = better. Price and time are weighted equally.
+  const minPrice = Math.min(...entries.map((e) => getItineraryPrice(e)));
+  const maxPrice = Math.max(...entries.map((e) => getItineraryPrice(e)));
+  const minDur = Math.min(...entries.map((e) => getItineraryDuration(e, legs)));
+  const maxDur = Math.max(...entries.map((e) => getItineraryDuration(e, legs)));
+  const priceRange = maxPrice - minPrice || 1;
+  const durRange = maxDur - minDur || 1;
 
-  const cheapest = entries[0];
-  const pricing = cheapest.pricingOptions?.[0];
+  entries.sort((a: any, b: any) => {
+    const scoreA =
+      (getItineraryPrice(a) - minPrice) / priceRange +
+      (getItineraryDuration(a, legs) - minDur) / durRange;
+    const scoreB =
+      (getItineraryPrice(b) - minPrice) / priceRange +
+      (getItineraryDuration(b, legs) - minDur) / durRange;
+    return scoreA - scoreB;
+  });
+
+  const best = entries[0];
+  const pricing = best.pricingOptions?.[0];
   if (!pricing) return null;
 
-  const priceAmount = parseFloat(pricing.price?.amount ?? "0");
-  const price = priceAmount > 1000 ? Math.round(priceAmount / 1000) : Math.round(priceAmount);
+  const price = Math.round(getItineraryPrice(best));
+  const durationMinutes = getItineraryDuration(best, legs);
 
-  // Resolve carrier name: legs are IDs referencing data.content.results.legs
-  const legs = data?.content?.results?.legs;
-  const carriers = data?.content?.results?.carriers;
+  // Resolve carrier name
   let airlineName = "Unknown";
-  const legId = cheapest.legIds?.[0];
+  const legId = best.legIds?.[0];
   if (legId && legs && carriers) {
     const leg = legs[legId];
     const carrierId = leg?.operatingCarrierIds?.[0] ?? leg?.marketingCarrierIds?.[0];
@@ -230,7 +254,6 @@ function parseSkyscannerResult(data: any, origin: string, dest: string): FlightR
     }
   }
 
-  // Build a working Skyscanner deeplink
   const date = getNextWeekendDate();
   const dateStr = `${date.year}${String(date.month).padStart(2, "0")}${String(date.day).padStart(2, "0")}`;
   const fallbackLink = `https://www.skyscanner.net/transport/flights/${origin.toLowerCase()}/${dest.toLowerCase()}/${dateStr}/`;
@@ -240,6 +263,7 @@ function parseSkyscannerResult(data: any, origin: string, dest: string): FlightR
     price,
     currency: "EUR",
     airline: airlineName,
+    durationMinutes: durationMinutes === Infinity ? 0 : Math.round(durationMinutes),
     deeplink,
   };
 }
@@ -318,7 +342,7 @@ async function processRequest(req: QueuedRequest): Promise<void> {
   try {
     const settings = await getSettings();
     if (!settings.ANTHROPIC_API_KEY) {
-      console.warn("Wander: No Anthropic API key set. Open extension settings.");
+      console.warn("Roam: No Anthropic API key set. Open extension settings.");
       return;
     }
 
@@ -326,7 +350,7 @@ async function processRequest(req: QueuedRequest): Promise<void> {
     let screenshot: string | null = null;
     if (windowId) {
       screenshot = await captureTab(windowId);
-      console.log("[Wander BG] Screenshot:", screenshot ? `${Math.round(screenshot.length / 1024)}KB` : "failed");
+      console.log("[Roam BG] Screenshot:", screenshot ? `${Math.round(screenshot.length / 1024)}KB` : "failed");
     }
 
     const fullText = [
@@ -337,9 +361,9 @@ async function processRequest(req: QueuedRequest): Promise<void> {
       .filter(Boolean)
       .join(" ");
 
-    console.log(`[Wander BG] Processing (${message.trigger}):`, fullText.slice(0, 60), screenshot ? "+ img" : "");
+    console.log(`[Roam BG] Processing (${message.trigger}):`, fullText.slice(0, 60), screenshot ? "+ img" : "");
     const detection = await detectTravel(fullText, screenshot, settings.ANTHROPIC_API_KEY);
-    console.log("[Wander BG] Claude:", detection.isTravel ? `${detection.destination} (${detection.airportCode})` : "not travel");
+    console.log("[Roam BG] Claude:", detection.isTravel ? `${detection.destination} (${detection.airportCode})` : "not travel");
 
     if (!detection.isTravel || !detection.destination) {
       lastDetectedDestination = "";
@@ -363,7 +387,7 @@ async function processRequest(req: QueuedRequest): Promise<void> {
         settings.HOME_AIRPORT || "BCN",
         settings.SKYSCANNER_API_KEY
       );
-      console.log("[Wander BG] Flight:", flight ? `${flight.price} ${flight.currency} (${flight.airline})` : "none found");
+      console.log("[Roam BG] Flight:", flight ? `${flight.price} ${flight.currency} (${flight.airline})` : "none found");
 
       // Update entry with flight data
       if (flight) {
@@ -374,7 +398,7 @@ async function processRequest(req: QueuedRequest): Promise<void> {
       await chrome.storage.local.set({ loadingDestination: null });
     }
   } catch (err) {
-    console.error("[Wander BG] Error:", err);
+    console.error("[Roam BG] Error:", err);
   }
 }
 
@@ -396,7 +420,7 @@ chrome.runtime.onMessage.addListener(
   (message: ContentPayload, sender, _sendResponse) => {
     if (message.type !== "CONTENT_DETECTED") return;
 
-    console.log(`[Wander BG] Queued (${message.trigger}):`, message.description?.slice(0, 50));
+    console.log(`[Roam BG] Queued (${message.trigger}):`, message.description?.slice(0, 50));
 
     // Always replace the pending request with the newest one
     pendingRequest = {

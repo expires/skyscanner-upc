@@ -108,7 +108,7 @@ function extractContent(): ContentPayload | null {
 // --- Send to background ---
 
 function sendPayload(payload: ContentPayload): void {
-  console.log(`[Wander] Sending (${payload.trigger}):`, payload.description.slice(0, 50));
+  console.log(`[Roam] Sending (${payload.trigger}):`, payload.description.slice(0, 50));
   chrome.runtime.sendMessage(payload);
 }
 
@@ -140,7 +140,7 @@ function handlePostChange(): void {
     currentPostId = newPostId;
     lastSentKey = "";
     lastSlideIndex = -1;
-    console.log("[Wander] New post detected:", newPostId.slice(0, 30));
+    console.log("[Roam] New post detected:", newPostId.slice(0, 30));
 
     // Stop previous video tick
     stopVideoTick();
@@ -213,7 +213,7 @@ function handleSlideChange(): void {
     const payload = extractContent();
     if (!payload) return;
     payload.trigger = "slide_change";
-    console.log("[Wander] Slide changed to index:", slideIdx);
+    console.log("[Roam] Slide changed to index:", slideIdx);
     sendPayload(payload);
   }, SLIDE_DEBOUNCE_MS);
 }
@@ -230,18 +230,18 @@ function startVideoTickIfNeeded(): void {
   // Small delay to let the video element load
   setTimeout(() => {
     if (!isVideoPlaying()) {
-      console.debug("[Wander] No active video, skipping tick");
+      console.debug("[Roam] No active video, skipping tick");
       return;
     }
 
-    console.log("[Wander] Video detected, starting periodic capture");
+    console.log("[Roam] Video detected, starting periodic capture");
     let tickCount = 0;
     const MAX_TICKS = 8; // Cap at 8 seconds per video to limit API calls
 
     videoTickInterval = setInterval(() => {
       tickCount++;
       if (tickCount > MAX_TICKS || !isVideoPlaying()) {
-        console.debug("[Wander] Stopping video tick (count:", tickCount, ")");
+        console.debug("[Roam] Stopping video tick (count:", tickCount, ")");
         stopVideoTick();
         return;
       }
@@ -298,5 +298,5 @@ observer.observe(document.body, {
 });
 
 // --- Init ---
-console.log("[Wander] Content script loaded on", location.hostname);
+console.log("[Roam] Content script loaded on", location.hostname);
 handlePostChange();
