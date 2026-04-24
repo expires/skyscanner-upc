@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "Wander",
+  "version": "0.1.0",
+  "description": "Passive travel intent detection powered by AI",
+  "permissions": ["storage", "activeTab", "tabs"],
+  "host_permissions": [
+    "https://www.tiktok.com/*",
+    "https://www.instagram.com/*",
+    "https://partners.api.skyscanner.net/*",
+    "https://api.anthropic.com/*"
+  ],
+  "background": {
+    "service_worker": "dist/background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.tiktok.com/*",
+        "https://www.instagram.com/*"
+      ],
+      "js": ["dist/content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Wander"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "wander-extension",
+  "version": "0.1.0",
+  "description": "Passive travel intent detection powered by AI",
+  "scripts": {
+    "build": "tsc && tsc -p tsconfig.content.json",
+    "watch": "tsc --watch & tsc -p tsconfig.content.json --watch"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.5.3",
+    "@types/chrome": "^0.0.287"
+  },
+  "private": true
+}

@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Wander</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      width: 380px;
+      min-height: 200px;
+      max-height: 580px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0f0f0f;
+      color: #e8e8e8;
+    }
+
+    /* Custom scrollbar */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb {
+      background: #2a2a2a;
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover { background: #3a3a3a; }
+
+    /* Header */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 16px;
+      border-bottom: 1px solid #1a1a1a;
+      position: sticky;
+      top: 0;
+      background: #0f0f0f;
+      z-index: 10;
+    }
+
+    .header h1 {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+    }
+
+    .tabs { display: flex; gap: 4px; }
+
+    .tab {
+      background: transparent;
+      border: 1px solid #2a2a2a;
+      color: #777;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .tab:hover { border-color: #444; color: #aaa; }
+
+    .tab.active {
+      background: #fff;
+      color: #000;
+      border-color: #fff;
+    }
+
+    /* Views */
+    .view { display: none; }
+    .view.active { display: block; }
+
+    .empty-state {
+      text-align: center;
+      padding: 48px 16px;
+      color: #444;
+    }
+
+    .empty-state p {
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    /* Feed */
+    .feed {
+      max-height: 500px;
+      overflow-y: auto;
+      padding-bottom: 4px;
+    }
+
+    .feed-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 14px 16px;
+      border-bottom: 1px solid #141414;
+      transition: background 0.1s;
+      position: relative;
+    }
+
+    .feed-item:hover { background: #131313; }
+    .feed-item:last-child { border-bottom: none; }
+
+    .feed-flag {
+      font-size: 26px;
+      line-height: 1;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+
+    .feed-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .feed-dest {
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: -0.2px;
+    }
+
+    .feed-meta {
+      font-size: 11px;
+      color: #555;
+      margin-top: 2px;
+    }
+
+    .feed-meta a {
+      color: #666;
+      text-decoration: none;
+    }
+
+    .feed-meta a:hover { color: #999; text-decoration: underline; }
+
+    .feed-vibes {
+      display: flex;
+      gap: 4px;
+      margin-top: 6px;
+      flex-wrap: wrap;
+    }
+
+    .vibe-tag {
+      background: #161625;
+      color: #7b7bdd;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.2px;
+    }
+
+    /* Right side: price + save inline */
+    .feed-right {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    .feed-price-row {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .feed-price-link {
+      text-decoration: none;
+      background: #0d2a0d;
+      border: 1px solid #1a3a1a;
+      border-radius: 8px;
+      padding: 5px 10px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      transition: all 0.12s;
+    }
+
+    .feed-price-link:hover {
+      background: #133613;
+      border-color: #245a24;
+    }
+
+    .feed-price {
+      font-size: 14px;
+      font-weight: 700;
+      color: #4ade80;
+    }
+
+    .feed-currency {
+      font-size: 10px;
+      color: #3ab868;
+      margin-right: 2px;
+    }
+
+    .feed-arrow {
+      font-size: 11px;
+      color: #3ab868;
+    }
+
+    .feed-save {
+      background: none;
+      border: 1px solid #2a2a2a;
+      color: #555;
+      width: 30px;
+      height: 30px;
+      border-radius: 7px;
+      cursor: pointer;
+      font-size: 15px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.12s;
+      flex-shrink: 0;
+    }
+
+    .feed-save:hover {
+      border-color: #4ade80;
+      color: #4ade80;
+    }
+
+    .feed-save.saved {
+      background: #0d2a0d;
+      border-color: #1a3a1a;
+      color: #4ade80;
+    }
+
+    .feed-airline {
+      font-size: 10px;
+      color: #444;
+      text-align: right;
+    }
+
+    /* Loading bar */
+    .feed-loading {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: #111;
+      overflow: hidden;
+    }
+
+    .feed-loading-bar {
+      height: 100%;
+      width: 40%;
+      background: linear-gradient(90deg, transparent, #4ade80, transparent);
+      animation: loading-slide 1.2s ease-in-out infinite;
+    }
+
+    @keyframes loading-slide {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(350%); }
+    }
+
+    /* Wishlist */
+    .wishlist-list {
+      max-height: 500px;
+      overflow-y: auto;
+    }
+
+    .wishlist-remove {
+      background: none;
+      border: 1px solid #2a2a2a;
+      color: #555;
+      cursor: pointer;
+      font-size: 14px;
+      width: 30px;
+      height: 30px;
+      border-radius: 7px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.12s;
+      flex-shrink: 0;
+    }
+
+    .wishlist-remove:hover {
+      border-color: #e44;
+      color: #e44;
+    }
+
+    /* Settings */
+    .settings-view { padding: 16px; }
+
+    .settings-view label {
+      display: block;
+      font-size: 12px;
+      color: #666;
+      margin-bottom: 4px;
+      margin-top: 14px;
+    }
+
+    .settings-view label:first-child { margin-top: 0; }
+
+    .settings-view input {
+      width: 100%;
+      padding: 10px;
+      background: #141414;
+      border: 1px solid #2a2a2a;
+      border-radius: 8px;
+      color: #e8e8e8;
+      font-size: 13px;
+      font-family: 'SF Mono', Menlo, monospace;
+    }
+
+    .settings-view input:focus {
+      outline: none;
+      border-color: #444;
+    }
+
+    .btn {
+      display: block;
+      width: 100%;
+      padding: 12px;
+      border: none;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 16px;
+      transition: opacity 0.15s;
+    }
+
+    .btn:hover { opacity: 0.85; }
+
+    .btn-primary { background: #fff; color: #000; }
+
+    .settings-status {
+      font-size: 12px;
+      color: #4ade80;
+      margin-top: 12px;
+      display: none;
+    }
+
+    .feed-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 16px;
+      border-bottom: 1px solid #141414;
+    }
+
+    .feed-count {
+      font-size: 11px;
+      color: #444;
+    }
+
+    .clear-btn {
+      background: none;
+      border: none;
+      color: #444;
+      font-size: 11px;
+      cursor: pointer;
+    }
+
+    .clear-btn:hover { color: #e44; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Wander</h1>
+    <div class="tabs">
+      <button class="tab active" data-tab="feed">Feed</button>
+      <button class="tab" data-tab="saved">Saved</button>
+      <button class="tab" data-tab="settings">Settings</button>
+    </div>
+  </div>
+
+  <!-- Feed -->
+  <div id="view-feed" class="view active">
+    <div id="feed-empty" class="empty-state">
+      <p>Scroll TikTok or Instagram<br/>and Wander will detect travel destinations.</p>
+    </div>
+    <div id="feed-toolbar" class="feed-toolbar" style="display:none;">
+      <span id="feed-count" class="feed-count"></span>
+      <button id="feed-clear" class="clear-btn">Clear all</button>
+    </div>
+    <div id="feed-list" class="feed"></div>
+  </div>
+
+  <!-- Saved -->
+  <div id="view-saved" class="view">
+    <div id="saved-empty" class="empty-state">
+      <p>No saved destinations yet.</p>
+    </div>
+    <div id="saved-list" class="wishlist-list"></div>
+  </div>
+
+  <!-- Settings -->
+  <div id="view-settings" class="view settings-view">
+    <label for="input-anthropic">Anthropic API Key</label>
+    <input id="input-anthropic" type="password" placeholder="sk-ant-..." />
+
+    <label for="input-skyscanner">Skyscanner API Key</label>
+    <input id="input-skyscanner" type="password" placeholder="API key from hackathon" />
+
+    <label for="input-airport">Home Airport (IATA)</label>
+    <input id="input-airport" type="text" placeholder="BCN" maxlength="3" style="text-transform:uppercase;" />
+
+    <button id="btn-save-settings" class="btn btn-primary">Save Settings</button>
+    <div id="settings-status" class="settings-status">Settings saved.</div>
+  </div>
+
+  <script src="dist/popup.js" type="module"></script>
+</body>
+</html>
