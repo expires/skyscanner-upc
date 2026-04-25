@@ -1,5 +1,6 @@
 import {
   DetectedEntry,
+  InterestScore,
   WishlistEntry,
 } from "./types.js";
 
@@ -39,6 +40,8 @@ const tagSuggestions = $<HTMLDivElement>("tag-suggestions");
 const activeFilter = $<HTMLDivElement>("active-filter");
 const filterText = $<HTMLSpanElement>("filter-text");
 const filterClear = $<HTMLButtonElement>("filter-clear");
+const rankedEmpty = $<HTMLDivElement>("ranked-empty");
+const rankedList = $<HTMLDivElement>("ranked-list");
 const savedEmpty = $<HTMLDivElement>("saved-empty");
 const savedList = $<HTMLDivElement>("saved-list");
 const btnSaveSettings = $<HTMLButtonElement>("btn-save-settings");
@@ -59,6 +62,7 @@ document.querySelectorAll<HTMLButtonElement>(".tab").forEach((tab) => {
     tab.classList.add("active");
     document.getElementById(`view-${tab.dataset.tab}`)?.classList.add("active");
 
+    if (tab.dataset.tab === "ranked") renderRanked();
     if (tab.dataset.tab === "saved") renderSaved();
     if (tab.dataset.tab === "settings") loadSettings();
   });
@@ -137,6 +141,16 @@ tagSearchInput.addEventListener("keydown", (e) => {
 
 filterClear.addEventListener("click", clearFilter);
 
+// --- Score lookup cache ---
+let cachedScores: InterestScore[] = [];
+
+function getScoreForDest(destination: string): number {
+  const match = cachedScores.find(
+    (s) => s.destination.toLowerCase() === destination.toLowerCase()
+  );
+  return match?.score ?? 0;
+}
+
 // --- Feed ---
 function renderFeedItem(
   entry: DetectedEntry,
@@ -177,10 +191,15 @@ function renderFeedItem(
     .map((v) => `<span class="vibe-tag">${v}</span>`)
     .join("");
 
+  const score = getScoreForDest(entry.destination);
+  const scoreBadge = score > 0
+    ? `<span class="feed-score-badge">${score}</span>`
+    : "";
+
   item.innerHTML = `
     <span class="feed-flag">${countryFlag(entry.countryCode)}</span>
     <div class="feed-info">
-      <div class="feed-dest">${entry.destination}</div>
+      <div class="feed-dest">${entry.destination}${scoreBadge}</div>
       <div class="feed-meta">
         ${entry.country}
         <a href="${entry.sourceUrl}" target="_blank" class="source-link">${sourceIcon(entry.sourceUrl)}</a>
@@ -222,10 +241,11 @@ let cachedWishlist: WishlistEntry[] = [];
 let cachedLoadingDests: string[] = [];
 
 async function renderFeed(): Promise<void> {
-  const stored = await chrome.storage.local.get(["detections", "wishlist", "loadingDestinations"]);
+  const stored = await chrome.storage.local.get(["detections", "wishlist", "loadingDestinations", "interestScores"]);
   allDetections = stored.detections ?? [];
   cachedWishlist = stored.wishlist ?? [];
   cachedLoadingDests = stored.loadingDestinations ?? [];
+  cachedScores = stored.interestScores ?? [];
   renderFeedWithData();
 }
 
@@ -383,6 +403,122 @@ async function renderSaved(): Promise<void> {
   });
 }
 
+const rankedReset = $<HTMLButtonElement>("ranked-reset");
+
+rankedReset.addEventListener("click", async () => {
+  await chrome.storage.local.set({ engagementLog: [], interestScores: [] });
+  renderRanked();
+});
+
+// --- Ranked ---
+function formatDwell(ms: number): string {
+  const secs = Math.round(ms / 1000);
+  if (secs < 60) return `${secs}s`;
+  const mins = Math.floor(secs / 60);
+  const remSecs = secs % 60;
+  return remSecs > 0 ? `${mins}m ${remSecs}s` : `${mins}m`;
+}
+
+async function renderRanked(): Promise<void> {
+  const { interestScores = [] } = await chrome.storage.local.get("interestScores") as { interestScores: InterestScore[] };
+
+  if (interestScores.length === 0) {
+    rankedEmpty.style.display = "block";
+    rankedList.style.display = "none";
+    return;
+  }
+
+  rankedEmpty.style.display = "none";
+  rankedList.style.display = "block";
+  rankedList.innerHTML = "";
+
+  interestScores.forEach((entry) => {
+    const item = document.createElement("div");
+    item.className = "ranked-item";
+
+    // Build summary line
+    const summaryParts: string[] = [];
+    if (entry.breakdown.totalDwell > 0) summaryParts.push(`${formatDwell(entry.breakdown.totalDwell)} dwell`);
+    if (entry.breakdown.likes > 0) summaryParts.push(`${entry.breakdown.likes} like${entry.breakdown.likes > 1 ? "s" : ""}`);
+    if (entry.breakdown.rewatches > 0) summaryParts.push(`${entry.breakdown.rewatches} rewatch${entry.breakdown.rewatches > 1 ? "es" : ""}`);
+    if (entry.breakdown.saveClicks > 0) summaryParts.push(`${entry.breakdown.saveClicks} save${entry.breakdown.saveClicks > 1 ? "s" : ""}`);
+    if (entry.breakdown.postCount > 1) summaryParts.push(`${entry.breakdown.postCount} posts`);
+    const summaryText = summaryParts.join(" · ") || "Tap to see breakdown";
+
+    // Build detailed breakdown rows
+    const b = entry.breakdown;
+    const rows: { label: string; value: string; highlight?: boolean }[] = [];
+    if (b.totalDwell > 0) rows.push({ label: "Time spent", value: formatDwell(b.totalDwell), highlight: true });
+    if (b.postCount > 0) rows.push({ label: "Posts seen", value: `${b.postCount}` });
+    if (b.likes > 0) rows.push({ label: "Likes", value: `${b.likes}`, highlight: true });
+    if (b.rewatches > 0) rows.push({ label: "Rewatches", value: `${b.rewatches}`, highlight: true });
+    if (b.saveClicks > 0) rows.push({ label: "Saves", value: `${b.saveClicks}`, highlight: true });
+    if (b.shareClicks > 0) rows.push({ label: "Shares", value: `${b.shareClicks}`, highlight: true });
+    if (b.profileClicks > 0) rows.push({ label: "Profile clicks", value: `${b.profileClicks}` });
+    if (b.hashtagClicks > 0) rows.push({ label: "Hashtag clicks", value: `${b.hashtagClicks}` });
+    if (b.soundOns > 0) rows.push({ label: "Sound on", value: `${b.soundOns}` });
+    if (b.commentOpens > 0) rows.push({ label: "Comments opened", value: `${b.commentOpens}` });
+    if (b.captionExpands > 0) rows.push({ label: "Captions expanded", value: `${b.captionExpands}` });
+    if (b.videoPauses > 0) rows.push({ label: "Video pauses", value: `${b.videoPauses}` });
+    rows.push({ label: "Raw score", value: `${Math.round(entry.rawScore * 10) / 10}` });
+
+    const detailRowsHtml = rows.map((r) =>
+      `<div class="ranked-breakdown-row">
+        <span class="ranked-breakdown-label">${r.label}</span>
+        <span class="ranked-breakdown-value${r.highlight ? " highlight" : ""}">${r.value}</span>
+      </div>`
+    ).join("");
+
+    // Flight row — sits between destination name and score bar
+    let flightHtml = "";
+    if (entry.flight) {
+      const dur = entry.flight.durationMinutes ? formatDuration(entry.flight.durationMinutes) : "";
+      const flightDetail = [entry.flight.airline, dur].filter(Boolean).join(" · ");
+      flightHtml = `
+        <div class="ranked-flight-inline">
+          <span class="ranked-flight-info">${flightDetail}</span>
+          <a class="ranked-flight-link" href="${entry.flight.deeplink}" target="_blank">
+            <span class="ranked-flight-price">${entry.flight.price} ${entry.flight.currency}</span>
+            <span class="ranked-flight-arrow">&nearr;</span>
+          </a>
+        </div>`;
+    }
+
+    item.innerHTML = `
+      <div class="ranked-top">
+        <span class="ranked-flag">${countryFlag(entry.countryCode)}</span>
+        <div class="ranked-info">
+          <div class="ranked-dest">${entry.destination}</div>
+          ${flightHtml}
+          <div class="ranked-bar-row">
+            <div class="ranked-bar-track">
+              <div class="ranked-bar-fill" style="width: ${entry.score}%"></div>
+            </div>
+            <span class="ranked-score">${entry.score}</span>
+          </div>
+          <div class="ranked-bar-label">Engagement score</div>
+        </div>
+      </div>
+      <button class="ranked-breakdown-toggle">
+        ${summaryText} <span class="ranked-breakdown-chevron">&#9660;</span>
+      </button>
+      <div class="ranked-breakdown-detail">
+        ${detailRowsHtml}
+      </div>
+    `;
+
+    // Wire toggle
+    const toggle = item.querySelector(".ranked-breakdown-toggle")!;
+    const detail = item.querySelector(".ranked-breakdown-detail")!;
+    toggle.addEventListener("click", () => {
+      toggle.classList.toggle("expanded");
+      detail.classList.toggle("visible");
+    });
+
+    rankedList.appendChild(item);
+  });
+}
+
 // --- Settings ---
 const inputCurrency = $<HTMLSelectElement>("input-currency");
 
@@ -408,7 +544,8 @@ btnSaveSettings.addEventListener("click", async () => {
 // --- Live updates ---
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local") return;
-  if (changes.detections || changes.loadingDestinations) renderFeed();
+  if (changes.detections || changes.loadingDestinations || changes.interestScores) renderFeed();
+  if (changes.interestScores) renderRanked();
 });
 
 // --- Init ---

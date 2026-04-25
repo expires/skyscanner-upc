@@ -3,9 +3,12 @@ import {
   DetectedEntry,
   DestinationHit,
   DetectionResult,
+  EngagementEvent,
   FlightResult,
+  InterestScore,
   StoredSettings,
 } from "./types.js";
+import { computeScores } from "./scorer.js";
 
 const CLAUDE_MODEL = "claude-haiku-4-5-20251001";
 const CLAUDE_API_URL = "https://api.anthropic.com/v1/messages";
@@ -27,6 +30,7 @@ Respond ONLY with valid JSON, no markdown, no explanation:
 }
 
 Rules:
+- IGNORE the creator/account username — it is NOT content. A post by "travel_brazil" showing Monaco is about Monaco, NOT Brazil
 - "destination" means a CITY or REGION you would fly to — NOT individual landmarks, beaches, caves, or attractions within that city/region
 - If a post shows multiple spots within the same city/region (e.g. Navagio Beach, Turtle Island, Eros Cave are all in Zakynthos), return ONE entry for the city/region (Zakynthos) with vibes that capture the highlights
 - Only return multiple destinations if they are in genuinely DIFFERENT cities/regions with DIFFERENT airports (e.g. "Barcelona and Tokyo" = 2 destinations, "5 beaches in Bali" = 1 destination)
@@ -456,6 +460,9 @@ async function processRequest(message: ContentPayload, windowId: number | undefi
     });
     console.log(`[Roam BG] Detected ${hits.length} destination(s):`, hits.map((h) => h.destination).join(", "));
 
+    // Register post+slide → destination mapping for engagement tracking
+    registerPostDestinations(message.postId, message.slideIndex, hits);
+
     // Add all to feed immediately (no flight data yet)
     for (const hit of hits) {
       await addDetection(hit, null, message.pageUrl);
@@ -474,24 +481,147 @@ async function processRequest(message: ContentPayload, windowId: number | undefi
   }
 }
 
+// --- V3: Post-to-destination mapping for engagement events ---
+
+// Maps "postId:slideIndex" → { destination, countryCode, country } so engagement events can be linked
+const postSlideMap = new Map<string, { destination: string; countryCode: string; country: string }>();
+
+function postSlideKey(postId: string, slideIndex: number): string {
+  return `${postId}:${slideIndex}`;
+}
+
+// Orphan engagement events that arrived before Claude classified the post+slide
+interface OrphanEvent {
+  eventType: string;
+  duration?: number;
+  postId: string;
+  slideIndex: number;
+  platform: "instagram" | "tiktok";
+  timestamp: number;
+}
+const orphanEvents: OrphanEvent[] = [];
+
+function registerPostDestinations(postId: string, slideIndex: number, hits: DestinationHit[]): void {
+  // Map each hit to this postId:slideIndex — first hit is primary for engagement
+  // Also register all hits so multiple destinations from one slide get mapped
+  for (let i = 0; i < hits.length; i++) {
+    const key = i === 0
+      ? postSlideKey(postId, slideIndex)
+      : postSlideKey(postId, slideIndex) + `:${i}`;
+    if (!postSlideMap.has(postSlideKey(postId, slideIndex))) {
+      postSlideMap.set(postSlideKey(postId, slideIndex), {
+        destination: hits[0].destination,
+        countryCode: hits[0].countryCode,
+        country: hits[0].country,
+      });
+    }
+  }
+
+  // Drain any orphan events that were waiting for this postId:slideIndex
+  const psKey = postSlideKey(postId, slideIndex);
+  const pending = orphanEvents.filter((e) => postSlideKey(e.postId, e.slideIndex) === psKey);
+  if (pending.length > 0) {
+    console.log(`[Roam BG] Draining ${pending.length} orphan event(s) for ${hits[0].destination}`);
+    for (let i = orphanEvents.length - 1; i >= 0; i--) {
+      if (postSlideKey(orphanEvents[i].postId, orphanEvents[i].slideIndex) === psKey) {
+        orphanEvents.splice(i, 1);
+      }
+    }
+    for (const evt of pending) {
+      handleEngagementEvent(evt);
+    }
+  }
+}
+
+// --- V3: Engagement event handler ---
+
+async function handleEngagementEvent(msg: {
+  eventType: string;
+  duration?: number;
+  postId: string;
+  slideIndex: number;
+  platform: "instagram" | "tiktok";
+  timestamp: number;
+}): Promise<void> {
+  // Look up which destination this post+slide maps to
+  const key = postSlideKey(msg.postId, msg.slideIndex);
+  const dest = postSlideMap.get(key);
+  if (!dest) {
+    // Post+slide hasn't been classified as travel yet — queue for later
+    orphanEvents.push(msg);
+    console.log(`[Roam BG] Queued orphan ${msg.eventType} for ${key}`);
+    return;
+  }
+
+  const event: EngagementEvent = {
+    destination: dest.destination,
+    countryCode: dest.countryCode,
+    eventType: msg.eventType as EngagementEvent["eventType"],
+    duration: msg.duration,
+    postId: msg.postId,
+    platform: msg.platform,
+    timestamp: msg.timestamp,
+  };
+
+  // Append to engagement log
+  const { engagementLog = [] } = await chrome.storage.local.get("engagementLog") as { engagementLog: EngagementEvent[] };
+  engagementLog.push(event);
+
+  // Trim old events (keep last 30 days)
+  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  const trimmed = engagementLog.filter((e) => e.timestamp > cutoff);
+
+  // Recompute scores
+  const { interestScores = [] } = await chrome.storage.local.get("interestScores") as { interestScores: InterestScore[] };
+
+  // Enrich scores with country/flight data from detections
+  const { detections = [] } = await chrome.storage.local.get("detections") as { detections: DetectedEntry[] };
+  const scores = computeScores(trimmed, interestScores);
+
+  // Fill in country and flight data from detections
+  for (const score of scores) {
+    const match = detections.find((d) =>
+      d.destination.toLowerCase() === score.destination.toLowerCase() ||
+      (d.airportCode && d.airportCode === score.airportCode)
+    );
+    if (match) {
+      if (!score.country) score.country = match.country;
+      if (!score.airportCode) score.airportCode = match.airportCode;
+      if (!score.flight) score.flight = match.flight;
+    }
+  }
+
+  await chrome.storage.local.set({
+    engagementLog: trimmed,
+    interestScores: scores,
+  });
+
+  console.log(`[Roam BG] Engagement: ${msg.eventType} for ${dest.destination} (score: ${scores.find(s => s.destination === dest.destination)?.score ?? 0})`);
+}
+
 // --- Message listener ---
 
 chrome.runtime.onMessage.addListener(
-  (message: ContentPayload, sender, _sendResponse) => {
-    if (message.type !== "CONTENT_DETECTED") return;
+  (message: any, sender, _sendResponse) => {
+    if (message.type === "CONTENT_DETECTED") {
+      const key = slideKey(message.postId, message.slideIndex);
 
-    const key = slideKey(message.postId, message.slideIndex);
+      // Skip if this exact post+slide is already processed or in-flight
+      if (processedSlides.has(key)) {
+        return;
+      }
+      processedSlides.add(key);
 
-    // Skip if this exact post+slide is already processed or in-flight
-    if (processedSlides.has(key)) {
-      return;
+      console.log(`[Roam BG] Firing (${message.trigger}, ${key}):`, message.description?.slice(0, 50));
+
+      // Fire immediately — runs in parallel with any other in-flight requests
+      processRequest(message as ContentPayload, sender.tab?.windowId);
+      return true;
     }
-    processedSlides.add(key);
 
-    console.log(`[Roam BG] Firing (${message.trigger}, ${key}):`, message.description?.slice(0, 50));
-
-    // Fire immediately — runs in parallel with any other in-flight requests
-    processRequest(message, sender.tab?.windowId);
-    return true;
+    if (message.type === "ENGAGEMENT_EVENT") {
+      handleEngagementEvent(message);
+      return true;
+    }
   }
 );

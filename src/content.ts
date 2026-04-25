@@ -25,6 +25,7 @@ let lastSlideIndex = -1;
 let currentPostId = "";
 let postFinished = false; // true once the video has ended for this post
 let currentVideo: HTMLVideoElement | null = null;
+let localSlideCounter = 0; // incremented on each carousel nav click
 
 function isTikTok(): boolean {
   return location.hostname.includes("tiktok.com");
@@ -152,11 +153,25 @@ function handlePostChange(): void {
   if (!newPostId) return;
 
   if (newPostId !== currentPostId) {
+    // Flush dwell for previous post before switching
+    engagement.flushDwell();
+
+    // Detect scroll-back (returning to a post we already saw)
+    if (seenPostIds.has(newPostId)) {
+      engagement.trackRewatch(newPostId);
+      engagement.trackScrollBack(newPostId);
+    }
+    seenPostIds.add(newPostId);
+
     currentPostId = newPostId;
     lastSentKey = "";
     lastSlideIndex = -1;
+    localSlideCounter = 0;
     postFinished = false;
     console.log("[Roam] New post detected:", newPostId.slice(0, 30));
+
+    // Start dwell tracking for this post
+    engagement.startDwell(newPostId);
 
     // Detach previous video listener
     if (currentVideo) {
@@ -170,12 +185,13 @@ function handlePostChange(): void {
     // Extract text and send
     handleTextChange();
 
-    // Attach ended listener and start tick if video
+    // Attach ended listener, start tick, and watch sound if video
     const video = document.querySelector("video");
     if (video) {
       currentVideo = video;
       video.addEventListener("ended", onVideoEnded);
       startVideoTickIfNeeded();
+      watchVideo(video, newPostId);
     }
   }
 }
@@ -202,14 +218,12 @@ function handleTextChange(): void {
 
 function getCurrentSlideIndex(): number {
   if (isTikTok()) {
-    // TikTok slideshows have dot indicators or slide counters
     const activeIndicator = document.querySelector(
       '[class*="SlideIndicator"] [class*="active"], [class*="DivDotItem"][class*="active"]'
     );
     if (activeIndicator?.parentElement) {
       return Array.from(activeIndicator.parentElement.children).indexOf(activeIndicator);
     }
-    // Fallback: look for "X/Y" counter text
     const counter = document.querySelector('[class*="SlideCount"], [class*="ImageCount"]');
     if (counter) {
       const match = counter.textContent?.match(/(\d+)\s*[/\/]\s*\d+/);
@@ -217,7 +231,6 @@ function getCurrentSlideIndex(): number {
     }
   }
   if (isInstagram()) {
-    // Instagram carousels have dot indicators
     const dots = document.querySelectorAll('[class*="CarouselIndicator"] div, [role="tablist"] [role="tab"]');
     for (let i = 0; i < dots.length; i++) {
       if (dots[i].getAttribute("aria-selected") === "true" ||
@@ -226,7 +239,8 @@ function getCurrentSlideIndex(): number {
       }
     }
   }
-  return 0;
+  // Fallback: use local counter (incremented on each carousel nav click)
+  return localSlideCounter;
 }
 
 function handleSlideChange(): void {
@@ -292,15 +306,268 @@ document.addEventListener("click", (e) => {
     target.closest('[data-e2e*="arrow"]');
 
   if (isNavClick) {
+    // Flush dwell for the current slide
+    engagement.flushDwell();
+
+    // Increment slide counter before the new slide loads
+    localSlideCounter++;
+
     // Wait for the slide to animate, then send a one-off slide_change
-    // Don't reset lastSentKey — that would cause video ticks to re-spam
     setTimeout(() => {
+      // Restart dwell for the new slide
+      if (currentPostId) engagement.startDwell(currentPostId);
+
       const payload = extractContent();
       if (!payload) return;
       payload.trigger = "slide_change";
-      console.log("[Roam] Carousel nav click detected");
+      console.log(`[Roam] Carousel nav → slide ${localSlideCounter}`);
       sendPayload(payload);
     }, 500);
+  }
+}, true);
+
+// --- V3: Engagement Tracker ---
+
+interface EngagementMsg {
+  type: "ENGAGEMENT_EVENT";
+  eventType: string;
+  duration?: number;
+  postId: string;
+  slideIndex: number;
+  platform: "instagram" | "tiktok";
+  timestamp: number;
+}
+
+function sendEngagement(msg: EngagementMsg): void {
+  try {
+    chrome.runtime.sendMessage(msg).catch(() => {});
+  } catch {
+    // Extension context invalidated
+  }
+}
+
+function getPlatform(): "instagram" | "tiktok" {
+  return isTikTok() ? "tiktok" : "instagram";
+}
+
+function engagementKey(): string {
+  return `${currentPostId}:${getCurrentSlideIndex()}`;
+}
+
+const engagement = {
+  dwellStart: 0,
+  trackedPostId: "",
+  trackedSlideIndex: 0,
+  rewatchedKeys: new Set<string>(),
+  soundTrackedKeys: new Set<string>(),
+
+  startDwell(postId: string): void {
+    this.flushDwell();
+    this.trackedPostId = postId;
+    this.trackedSlideIndex = getCurrentSlideIndex();
+    this.dwellStart = Date.now();
+  },
+
+  flushDwell(): void {
+    if (this.dwellStart && this.trackedPostId) {
+      const duration = Date.now() - this.dwellStart;
+      if (duration > 1500) {
+        sendEngagement({
+          type: "ENGAGEMENT_EVENT",
+          eventType: "dwell",
+          duration,
+          postId: this.trackedPostId,
+          slideIndex: this.trackedSlideIndex,
+          platform: getPlatform(),
+          timestamp: Date.now(),
+        });
+        console.log(`[Roam] Dwell: ${Math.round(duration / 1000)}s on ${this.trackedPostId.slice(0, 20)}:${this.trackedSlideIndex}`);
+      }
+      this.dwellStart = 0;
+    }
+  },
+
+  trackRewatch(postId: string): void {
+    const key = engagementKey();
+    if (this.rewatchedKeys.has(key)) return;
+    this.rewatchedKeys.add(key);
+    sendEngagement({
+      type: "ENGAGEMENT_EVENT",
+      eventType: "rewatch",
+      postId,
+      slideIndex: getCurrentSlideIndex(),
+      platform: getPlatform(),
+      timestamp: Date.now(),
+    });
+    console.log("[Roam] Rewatch:", key);
+  },
+
+  trackSoundOn(postId: string): void {
+    const key = engagementKey();
+    if (this.soundTrackedKeys.has(key)) return;
+    this.soundTrackedKeys.add(key);
+    sendEngagement({
+      type: "ENGAGEMENT_EVENT",
+      eventType: "sound_on",
+      postId,
+      slideIndex: getCurrentSlideIndex(),
+      platform: getPlatform(),
+      timestamp: Date.now(),
+    });
+    console.log("[Roam] Sound on:", key);
+  },
+
+  trackProfileClick(postId: string): void {
+    sendEngagement({
+      type: "ENGAGEMENT_EVENT",
+      eventType: "profile_click",
+      postId,
+      slideIndex: getCurrentSlideIndex(),
+      platform: getPlatform(),
+      timestamp: Date.now(),
+    });
+    console.log("[Roam] Profile click:", engagementKey());
+  },
+
+  trackHashtagClick(postId: string): void {
+    sendEngagement({
+      type: "ENGAGEMENT_EVENT",
+      eventType: "hashtag_click",
+      postId,
+      slideIndex: getCurrentSlideIndex(),
+      platform: getPlatform(),
+      timestamp: Date.now(),
+    });
+    console.log("[Roam] Hashtag click:", engagementKey());
+  },
+
+  trackScrollBack(postId: string): void {
+    sendEngagement({
+      type: "ENGAGEMENT_EVENT",
+      eventType: "scroll_back",
+      postId,
+      slideIndex: getCurrentSlideIndex(),
+      platform: getPlatform(),
+      timestamp: Date.now(),
+    });
+    console.log("[Roam] Scroll back:", engagementKey());
+  },
+};
+
+// Track rewatch: if we navigate back to a post we already saw
+const seenPostIds = new Set<string>();
+
+// Sound + pause detection — watch for volume/mute and pause on video elements
+function watchVideo(video: HTMLVideoElement, postId: string): void {
+  video.addEventListener("volumechange", () => {
+    if (!video.muted) engagement.trackSoundOn(postId);
+  });
+  // User-initiated pause (not programmatic)
+  let wasPlaying = !video.paused;
+  video.addEventListener("pause", () => {
+    if (wasPlaying && !video.ended) {
+      sendEngagement({
+        type: "ENGAGEMENT_EVENT",
+        eventType: "video_pause",
+        postId,
+        slideIndex: getCurrentSlideIndex(),
+        platform: getPlatform(),
+        timestamp: Date.now(),
+      });
+      console.log("[Roam] Video pause:", engagementKey());
+    }
+  });
+  video.addEventListener("play", () => { wasPlaying = true; });
+}
+
+// Helper: emit an engagement event for the current post+slide
+function emitEngagement(eventType: string): void {
+  sendEngagement({
+    type: "ENGAGEMENT_EVENT",
+    eventType,
+    postId: currentPostId,
+    slideIndex: getCurrentSlideIndex(),
+    platform: getPlatform(),
+    timestamp: Date.now(),
+  });
+  console.log(`[Roam] ${eventType}:`, engagementKey());
+}
+
+// Helper: check if the clicked element (or its parent button) contains an SVG with a matching aria-label
+function clickedSvgLabel(target: HTMLElement, ...labels: string[]): boolean {
+  // Check if the target itself or an ancestor is/contains a matching SVG
+  for (const label of labels) {
+    // Direct match: clicked on the SVG or its children
+    if (target.closest(`svg[aria-label="${label}"]`)) return true;
+    // Parent button contains a matching SVG
+    const btn = target.closest("button");
+    if (btn?.querySelector(`svg[aria-label="${label}"]`)) return true;
+    // Also check span/div wrappers (TikTok)
+    const wrapper = target.closest('[role="button"]');
+    if (wrapper?.querySelector(`svg[aria-label="${label}"]`)) return true;
+  }
+  return false;
+}
+
+// Engagement click detection
+document.addEventListener("click", (e) => {
+  const target = e.target as HTMLElement;
+  if (!currentPostId) return;
+
+  // --- Like ---
+  if (clickedSvgLabel(target, "Like", "Unlike", "like", "unlike")) {
+    emitEngagement("like");
+  }
+
+  // --- Save/bookmark ---
+  if (clickedSvgLabel(target, "Save", "Remove", "Unsave", "save", "Favorites", "Add to Favorites", "Remove from Favorites")) {
+    emitEngagement("save_click");
+  }
+
+  // --- Share ---
+  if (clickedSvgLabel(target, "Share Post", "Share", "share", "Send Message", "Direct")) {
+    emitEngagement("share_click");
+  }
+
+  // --- Comment ---
+  if (clickedSvgLabel(target, "Comment", "comment", "View comments")) {
+    emitEngagement("comment_open");
+  }
+
+  // --- Profile clicks ---
+  const profileLink =
+    target.closest("a[href*='/profile/']") ??         // TikTok
+    target.closest('a[href^="/"]:not([href*="/p/"]):not([href*="/reel/"])'); // Instagram
+  if (profileLink) {
+    const href = (profileLink as HTMLAnchorElement).href ?? "";
+    if (href.match(/\/@[\w.]+\/?$/) || (isInstagram() && href.match(/\/[\w.]+\/?$/))) {
+      engagement.trackProfileClick(currentPostId);
+    }
+  }
+
+  // --- Hashtag clicks ---
+  const hashtagLink =
+    target.closest("a[href*='/tag/']") ??
+    target.closest("a[href*='/explore/tags/']");
+  if (hashtagLink) {
+    engagement.trackHashtagClick(currentPostId);
+  }
+
+  // --- Caption expand ("more" / "...more") ---
+  const expandBtn = target.closest('[role="button"]');
+  if (expandBtn) {
+    const text = expandBtn.textContent?.trim().toLowerCase() ?? "";
+    if (text === "more" || text === "...more" || text === "... more") {
+      emitEngagement("caption_expand");
+    }
+  }
+
+  // --- TikTok fallbacks using data-e2e attributes ---
+  if (isTikTok()) {
+    if (target.closest('[data-e2e*="like"]')) emitEngagement("like");
+    if (target.closest('[data-e2e*="favorite"], [data-e2e*="collect"]')) emitEngagement("save_click");
+    if (target.closest('[data-e2e*="share"]')) emitEngagement("share_click");
+    if (target.closest('[data-e2e*="comment"]')) emitEngagement("comment_open");
   }
 }, true);
 
@@ -316,6 +583,11 @@ observer.observe(document.body, {
   childList: true,
   subtree: true,
   characterData: true,
+});
+
+// Flush dwell on page unload
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) engagement.flushDwell();
 });
 
 // --- Init ---
