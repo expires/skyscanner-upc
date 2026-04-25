@@ -42,6 +42,7 @@ async function getSettings(): Promise<StoredSettings> {
     "ANTHROPIC_API_KEY",
     "SKYSCANNER_API_KEY",
     "HOME_AIRPORT",
+    "CURRENCY",
   ])) as StoredSettings;
 }
 
@@ -118,12 +119,12 @@ const SKYSCANNER_BASE =
 const MAX_POLLS = 5;
 const POLL_DELAY_MS = 2000;
 
-function buildSkyscannerQuery(homeAirport: string, destAirport: string) {
+function buildSkyscannerQuery(homeAirport: string, destAirport: string, currency: string = "EUR") {
   return {
     query: {
       market: "ES",
       locale: "en-GB",
-      currency: "EUR",
+      currency,
       queryLegs: [
         {
           originPlaceId: { iata: homeAirport },
@@ -140,7 +141,8 @@ function buildSkyscannerQuery(homeAirport: string, destAirport: string) {
 async function searchFlights(
   destAirport: string,
   homeAirport: string,
-  apiKey: string
+  apiKey: string,
+  currency: string = "EUR"
 ): Promise<FlightResult | null> {
   if (!apiKey) return null;
 
@@ -148,7 +150,7 @@ async function searchFlights(
     const createRes = await fetch(`${SKYSCANNER_BASE}/create`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": apiKey },
-      body: JSON.stringify(buildSkyscannerQuery(homeAirport, destAirport)),
+      body: JSON.stringify(buildSkyscannerQuery(homeAirport, destAirport, currency)),
     });
 
     if (!createRes.ok) {
@@ -166,13 +168,13 @@ async function searchFlights(
       const pollRes = await fetch(`${SKYSCANNER_BASE}/poll/${sessionToken}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-api-key": apiKey },
-        body: JSON.stringify(buildSkyscannerQuery(homeAirport, destAirport)),
+        body: JSON.stringify(buildSkyscannerQuery(homeAirport, destAirport, currency)),
       });
       if (!pollRes.ok) break;
       data = await pollRes.json();
     }
 
-    return parseSkyscannerResult(data, homeAirport, destAirport);
+    return parseSkyscannerResult(data, homeAirport, destAirport, currency);
   } catch (e) {
     console.warn("[Roam BG] Skyscanner fetch failed:", e);
     return null;
@@ -190,7 +192,7 @@ function getItineraryDuration(itin: any, legs: any): number {
   return legs[legId].durationInMinutes ?? Infinity;
 }
 
-function parseSkyscannerResult(data: any, origin: string, dest: string): FlightResult | null {
+function parseSkyscannerResult(data: any, origin: string, dest: string, currency: string = "EUR"): FlightResult | null {
   const itineraries = data?.content?.results?.itineraries;
   if (!itineraries) return null;
 
@@ -233,7 +235,7 @@ function parseSkyscannerResult(data: any, origin: string, dest: string): FlightR
 
   return {
     price,
-    currency: "EUR",
+    currency,
     airline: airlineName,
     durationMinutes: durationMinutes === Infinity ? 0 : Math.round(durationMinutes),
     deeplink: pricing.items?.[0]?.deepLink || fallbackLink,
@@ -376,7 +378,8 @@ async function processDestination(
     const flight = await searchFlights(
       airportCode,
       settings.HOME_AIRPORT || "BCN",
-      settings.SKYSCANNER_API_KEY
+      settings.SKYSCANNER_API_KEY,
+      settings.CURRENCY || "EUR"
     );
 
     flightCache.set(airportCode, flight);

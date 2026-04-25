@@ -384,11 +384,14 @@ async function renderSaved(): Promise<void> {
 }
 
 // --- Settings ---
+const inputCurrency = $<HTMLSelectElement>("input-currency");
+
 async function loadSettings(): Promise<void> {
-  const s = await chrome.storage.sync.get(["ANTHROPIC_API_KEY", "SKYSCANNER_API_KEY", "HOME_AIRPORT"]);
+  const s = await chrome.storage.sync.get(["ANTHROPIC_API_KEY", "SKYSCANNER_API_KEY", "HOME_AIRPORT", "CURRENCY"]);
   inputAnthropic.value = s.ANTHROPIC_API_KEY ?? "";
   inputSkyscanner.value = s.SKYSCANNER_API_KEY ?? "";
   inputAirport.value = s.HOME_AIRPORT ?? "";
+  inputCurrency.value = s.CURRENCY ?? "EUR";
 }
 
 btnSaveSettings.addEventListener("click", async () => {
@@ -396,6 +399,7 @@ btnSaveSettings.addEventListener("click", async () => {
     ANTHROPIC_API_KEY: inputAnthropic.value.trim(),
     SKYSCANNER_API_KEY: inputSkyscanner.value.trim(),
     HOME_AIRPORT: inputAirport.value.trim().toUpperCase(),
+    CURRENCY: inputCurrency.value,
   });
   settingsStatus.style.display = "block";
   setTimeout(() => { settingsStatus.style.display = "none"; }, 2000);
