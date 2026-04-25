@@ -644,7 +644,7 @@ async function handleEngagementEvent(msg: {
   const { detections = [] } = await chrome.storage.local.get("detections") as { detections: DetectedEntry[] };
   const scores = computeScores(trimmed, interestScores);
 
-  // Fill in country and flight data from detections
+  // Fill in country and flight data from detections (always use latest)
   for (const score of scores) {
     const match = detections.find((d) =>
       d.destination.toLowerCase() === score.destination.toLowerCase() ||
@@ -653,7 +653,7 @@ async function handleEngagementEvent(msg: {
     if (match) {
       if (!score.country) score.country = match.country;
       if (!score.airportCode) score.airportCode = match.airportCode;
-      if (!score.flight) score.flight = match.flight;
+      if (match.flight) score.flight = match.flight;
     }
   }
 
