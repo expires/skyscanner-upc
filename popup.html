@@ -124,12 +124,20 @@
       margin-top: 2px;
     }
 
-    .feed-meta a {
-      color: #666;
-      text-decoration: none;
+    .source-link {
+      display: inline-flex;
+      vertical-align: middle;
+      margin-left: 4px;
+      color: #555;
+      transition: color 0.1s;
     }
 
-    .feed-meta a:hover { color: #999; text-decoration: underline; }
+    .source-link:hover { color: #aaa; }
+
+    .source-icon {
+      width: 12px;
+      height: 12px;
+    }
 
     .feed-vibes {
       display: none;
@@ -161,6 +169,91 @@
     }
 
     .vibes-toggle:hover { color: #7b7bdd; }
+
+    /* Tag search */
+    .tag-search-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      border-bottom: 1px solid #141414;
+    }
+
+    .tag-search-input {
+      flex: 1;
+      background: #141414;
+      border: 1px solid #222;
+      border-radius: 8px;
+      padding: 7px 10px;
+      color: #e8e8e8;
+      font-size: 12px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      outline: none;
+    }
+
+    .tag-search-input:focus { border-color: #7b7bdd; }
+
+    .tag-search-input::placeholder { color: #444; }
+
+    .active-filter {
+      display: none;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 16px;
+      border-bottom: 1px solid #141414;
+    }
+
+    .active-filter.visible { display: flex; }
+
+    .filter-tag {
+      background: #1a1a35;
+      color: #7b7bdd;
+      padding: 3px 10px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .filter-clear {
+      background: none;
+      border: none;
+      color: #7b7bdd;
+      cursor: pointer;
+      font-size: 13px;
+      padding: 0;
+      line-height: 1;
+    }
+
+    .filter-clear:hover { color: #fff; }
+
+    .tag-suggestions {
+      display: none;
+      flex-wrap: wrap;
+      gap: 4px;
+      padding: 6px 16px;
+      border-bottom: 1px solid #141414;
+    }
+
+    .tag-suggestions.visible { display: flex; }
+
+    .tag-suggestion {
+      background: #161625;
+      color: #666;
+      padding: 3px 10px;
+      border-radius: 10px;
+      font-size: 11px;
+      cursor: pointer;
+      border: none;
+      transition: all 0.1s;
+    }
+
+    .tag-suggestion:hover {
+      color: #7b7bdd;
+      background: #1a1a35;
+    }
 
     /* Right side: price + save inline */
     .feed-right {
@@ -389,6 +482,16 @@
     <div id="feed-toolbar" class="feed-toolbar" style="display:none;">
       <span id="feed-count" class="feed-count"></span>
       <button id="feed-clear" class="clear-btn">Clear all</button>
+    </div>
+    <div class="tag-search-bar">
+      <input id="tag-search" class="tag-search-input" type="text" placeholder="Search by mood or tag..." />
+    </div>
+    <div id="tag-suggestions" class="tag-suggestions"></div>
+    <div id="active-filter" class="active-filter">
+      <span id="filter-label" class="filter-tag">
+        <span id="filter-text"></span>
+        <button id="filter-clear" class="filter-clear">&times;</button>
+      </span>
     </div>
     <div id="feed-list" class="feed"></div>
   </div>
