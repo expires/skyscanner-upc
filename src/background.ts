@@ -361,8 +361,17 @@ async function addDetection(
   await chrome.storage.local.set({ detections });
 }
 
-async function setLoading(destinations: string[]): Promise<void> {
-  await chrome.storage.local.set({ loadingDestinations: destinations });
+async function addLoading(destinations: string[]): Promise<void> {
+  const { loadingDestinations = [] } = await chrome.storage.local.get("loadingDestinations");
+  const existing = new Set((loadingDestinations as string[]).map((d) => d.toLowerCase()));
+  const merged = [...loadingDestinations as string[]];
+  for (const d of destinations) {
+    if (!existing.has(d.toLowerCase())) {
+      merged.push(d);
+      existing.add(d.toLowerCase());
+    }
+  }
+  await chrome.storage.local.set({ loadingDestinations: merged });
 }
 
 async function removeLoading(destination: string): Promise<void> {
@@ -434,7 +443,17 @@ async function processDestination(
     flightCache.set(airportCode, flight);
     console.log(`[Roam BG] Flight for ${hit.destination}:`, flight ? `${flight.price} ${flight.currency} · ${flight.airline}` : "none");
 
-    await addDetection(hit, flight, sourceUrl);
+    if (!flight) {
+      // No valid flight (bad IATA, no results) — remove from feed
+      const { detections = [] } = await chrome.storage.local.get("detections") as { detections: DetectedEntry[] };
+      const filtered = detections.filter(
+        (d) => d.destination.toLowerCase() !== hit.destination.toLowerCase()
+      );
+      await chrome.storage.local.set({ detections: filtered });
+      console.log(`[Roam BG] Removed ${hit.destination} from feed (no valid flights)`);
+    } else {
+      await addDetection(hit, flight, sourceUrl);
+    }
     await removeLoading(hit.destination);
   } finally {
     releaseFlightSlot();
@@ -511,7 +530,7 @@ async function processRequest(message: ContentPayload, windowId: number | undefi
     }
 
     // Mark all as loading
-    await setLoading(hits.map((h) => h.destination));
+    await addLoading(hits.map((h) => h.destination));
 
     // Fire all flight searches — global semaphore limits to 5 concurrent
     await Promise.all(

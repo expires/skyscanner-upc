@@ -170,9 +170,9 @@ function renderFeedItem(
         <span class="feed-arrow">&nearr;</span>
       </a>`;
   } else if (isLoading) {
-    priceHtml = `<span class="feed-price-link" style="opacity:0.4;pointer-events:none;">
-        <span class="feed-currency">searching...</span>
-      </span>`;
+    priceHtml = `<div class="feed-price-skeleton">
+        <span class="feed-price-skeleton-text">Searching...</span>
+      </div>`;
   } else {
     priceHtml = "";
   }
@@ -181,10 +181,6 @@ function renderFeedItem(
   const detailParts = [entry.flight?.airline, dur].filter(Boolean).join(" · ");
   const detailHtml = detailParts
     ? `<span class="feed-airline">${detailParts}</span>`
-    : "";
-
-  const loadingHtml = isLoading
-    ? `<div class="feed-loading"><div class="feed-loading-bar"></div></div>`
     : "";
 
   const vibesHtml = entry.vibes
@@ -203,7 +199,7 @@ function renderFeedItem(
       <div class="feed-meta">
         ${entry.country}
         <a href="${entry.sourceUrl}" target="_blank" class="source-link">${sourceIcon(entry.sourceUrl)}</a>
-        ${entry.vibes.length > 0 ? `<button class="vibes-toggle" title="${entry.vibes.join(', ')}">🏷 ${entry.vibes.length}</button>` : ""}
+        ${entry.vibes.length > 0 ? `<button class="vibes-toggle" title="${entry.vibes.join(', ')}"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><circle cx="7" cy="7" r="1.5" fill="currentColor" stroke="none"/></svg> ${entry.vibes.length}</button>` : ""}
       </div>
       <div class="feed-vibes">${vibesHtml}</div>
     </div>
@@ -211,12 +207,11 @@ function renderFeedItem(
       <div class="feed-price-row">
         ${priceHtml}
         <button class="feed-save ${isSaved ? "saved" : ""}" data-id="${entry.id}" title="${isSaved ? "Saved" : "Save to wishlist"}">
-          ${isSaved ? "&#10003;" : "&#9734;"}
+          &#9734;
         </button>
       </div>
       ${detailHtml}
     </div>
-    ${loadingHtml}
   `;
 
   // Toggle vibes on tag emoji click
@@ -285,39 +280,44 @@ function renderFeedWithData(): void {
     feedList.appendChild(item);
   });
 
-  // Save buttons
+  // Save buttons — click to toggle save/unsave
   feedList.querySelectorAll<HTMLButtonElement>(".feed-save").forEach((btn) => {
-    if (btn.classList.contains("saved")) return;
-    btn.addEventListener("click", () => saveFromFeed(btn));
+    btn.addEventListener("click", () => toggleSave(btn));
   });
 }
 
-async function saveFromFeed(btn: HTMLButtonElement): Promise<void> {
+async function toggleSave(btn: HTMLButtonElement): Promise<void> {
   const id = btn.dataset.id;
   const stored = await chrome.storage.local.get(["detections", "wishlist"]);
   const detections: DetectedEntry[] = stored.detections ?? [];
-  const wishlist: WishlistEntry[] = stored.wishlist ?? [];
+  let wishlist: WishlistEntry[] = stored.wishlist ?? [];
 
   const entry = detections.find((d) => d.id === id);
   if (!entry) return;
 
-  if (wishlist.some((w) => w.destination.toLowerCase() === entry.destination.toLowerCase())) return;
+  const destKey = entry.destination.toLowerCase();
+  const alreadySaved = wishlist.some((w) => w.destination.toLowerCase() === destKey);
 
-  wishlist.push({
-    id: crypto.randomUUID(),
-    destination: entry.destination,
-    country: entry.country,
-    countryCode: entry.countryCode,
-    vibes: entry.vibes,
-    flight: entry.flight,
-    sourceUrl: entry.sourceUrl,
-    savedAt: Date.now(),
-  });
-
-  await chrome.storage.local.set({ wishlist });
-
-  btn.innerHTML = "&#10003;";
-  btn.classList.add("saved");
+  if (alreadySaved) {
+    // Unsave
+    wishlist = wishlist.filter((w) => w.destination.toLowerCase() !== destKey);
+    await chrome.storage.local.set({ wishlist });
+    btn.classList.remove("saved");
+  } else {
+    // Save
+    wishlist.push({
+      id: crypto.randomUUID(),
+      destination: entry.destination,
+      country: entry.country,
+      countryCode: entry.countryCode,
+      vibes: entry.vibes,
+      flight: entry.flight,
+      sourceUrl: entry.sourceUrl,
+      savedAt: Date.now(),
+    });
+    await chrome.storage.local.set({ wishlist });
+    btn.classList.add("saved");
+  }
 }
 
 feedClear.addEventListener("click", async () => {
@@ -369,7 +369,7 @@ async function renderSaved(): Promise<void> {
         <div class="feed-meta">
           ${entry.country}
           <a href="${entry.sourceUrl}" target="_blank" class="source-link">${sourceIcon(entry.sourceUrl)}</a>
-          ${entry.vibes.length > 0 ? `<button class="vibes-toggle" title="${entry.vibes.join(', ')}">🏷 ${entry.vibes.length}</button>` : ""}
+          ${entry.vibes.length > 0 ? `<button class="vibes-toggle" title="${entry.vibes.join(', ')}"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><circle cx="7" cy="7" r="1.5" fill="currentColor" stroke="none"/></svg> ${entry.vibes.length}</button>` : ""}
         </div>
         <div class="feed-vibes">${vibesHtml}</div>
       </div>
