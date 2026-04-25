@@ -1,32 +1,20 @@
 import { EngagementEvent, InterestScore } from "./types.js";
+import { CONFIG } from "./config.js";
 
-const WEIGHTS: Record<string, number> = {
-  dwell: 0.5,             // base per second — scaled non-linearly below
-  rewatch: 25,            // high intent — they came BACK
-  sound_on: 12,           // chose to hear it
-  profile_click: 30,      // strongest single signal — researching the creator
-  hashtag_click: 20,      // exploring the topic
-  scroll_back: 18,        // deliberate return
-  save_click: 35,         // bookmarked — highest intent discrete action
-  share_click: 30,        // sharing with someone = seriously considering
-  comment_open: 15,       // reading comments = deep engagement
-  caption_expand: 10,     // reading full caption
-  video_pause: 8,         // paused to look closer
-  like: 20,               // liked the post — clear positive signal
-};
-
-// Bonus: seeing the same destination across multiple different posts
-const MULTI_POST_BONUS = 10; // per additional unique post beyond the first
-
-const DECAY_HALF_LIFE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
-
-// Non-linear dwell: first 5s = base, 5-15s = 1.5x, 15-30s = 2x, 30s+ = 3x
+// Non-linear dwell logic using CONFIG
 function dwellScore(durationMs: number): number {
   const secs = durationMs / 1000;
-  if (secs <= 5) return secs * WEIGHTS.dwell;
-  if (secs <= 15) return 5 * WEIGHTS.dwell + (secs - 5) * WEIGHTS.dwell * 1.5;
-  if (secs <= 30) return 5 * WEIGHTS.dwell + 10 * WEIGHTS.dwell * 1.5 + (secs - 15) * WEIGHTS.dwell * 2;
-  return 5 * WEIGHTS.dwell + 10 * WEIGHTS.dwell * 1.5 + 15 * WEIGHTS.dwell * 2 + (secs - 30) * WEIGHTS.dwell * 3;
+  const { THRESHOLDS_SEC: T, MULTIPLIERS: M } = CONFIG.SCORING.DWELL;
+  const baseWeight = CONFIG.SCORING.WEIGHTS.dwell;
+
+  if (secs <= T.FIRST) return secs * baseWeight * M.BASE;
+  if (secs <= T.SECOND) return (T.FIRST * baseWeight * M.BASE) + ((secs - T.FIRST) * baseWeight * M.SECOND);
+  if (secs <= T.THIRD) return (T.FIRST * baseWeight * M.BASE) + ((T.SECOND - T.FIRST) * baseWeight * M.SECOND) + ((secs - T.SECOND) * baseWeight * M.THIRD);
+  
+  return (T.FIRST * baseWeight * M.BASE) + 
+         ((T.SECOND - T.FIRST) * baseWeight * M.SECOND) + 
+         ((T.THIRD - T.SECOND) * baseWeight * M.THIRD) + 
+         ((secs - T.THIRD) * baseWeight * M.FOURTH);
 }
 
 export function calculateRawScore(events: EngagementEvent[]): number {
@@ -34,16 +22,16 @@ export function calculateRawScore(events: EngagementEvent[]): number {
 
   // Count unique posts for multi-post bonus
   const uniquePosts = new Set(events.map((e) => e.postId));
-  const multiPostBonus = Math.max(0, uniquePosts.size - 1) * MULTI_POST_BONUS;
+  const multiPostBonus = Math.max(0, uniquePosts.size - 1) * CONFIG.SCORING.MULTI_POST_BONUS;
 
   const eventScore = events.reduce((total, event) => {
     const age = now - event.timestamp;
-    const decayFactor = Math.pow(0.5, age / DECAY_HALF_LIFE_MS);
+    const decayFactor = Math.pow(0.5, age / CONFIG.SCORING.DECAY_HALF_LIFE_MS);
 
     if (event.eventType === "dwell" && event.duration) {
       return total + dwellScore(event.duration) * decayFactor;
     }
-    return total + (WEIGHTS[event.eventType] ?? 0) * decayFactor;
+    return total + (CONFIG.SCORING.WEIGHTS[event.eventType] ?? 0) * decayFactor;
   }, 0);
 
   return eventScore + multiPostBonus;

@@ -9,8 +9,8 @@ import {
   StoredSettings,
 } from "./types.js";
 import { computeScores } from "./scorer.js";
+import { CONFIG } from "./config.js";
 
-const GEMINI_MODEL = "gemma-3-27b-it";
 const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
 const DETECTION_PROMPT = `You are a JSON API. Output ONLY a JSON object, nothing else.
@@ -89,7 +89,7 @@ async function detectTravel(
     });
   }
 
-  const url = `${GEMINI_API_BASE}/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
+  const url = `${GEMINI_API_BASE}/${CONFIG.GEMINI.NARRATOR_MODEL}:generateContent?key=${apiKey}`;
 
   const response = await fetch(url, {
     method: "POST",
@@ -97,8 +97,8 @@ async function detectTravel(
     body: JSON.stringify({
       contents: [{ parts }],
       generationConfig: {
-        maxOutputTokens: 1024,
-        temperature: 0.0,
+        maxOutputTokens: CONFIG.GEMINI.MAX_OUTPUT_TOKENS,
+        temperature: CONFIG.GEMINI.TEMPERATURE,
       },
     }),
   });
@@ -165,18 +165,14 @@ async function detectTravel(
 
 const SKYSCANNER_BASE =
   "https://partners.api.skyscanner.net/apiservices/v3/flights/live/search";
-const BASE_POLLS = 5;
-const MAX_POLLS_CAP = 20;
-const POLL_DELAY_MS = 2000;
 
 /**
- * Dynamic poll budget: base 5 polls + 1 extra for every 5 s of dwell the user
- * spent watching content about this destination (capped at 20).
+ * Dynamic poll budget based on config.
  * More genuine interest → more polling attempts → higher chance of a complete result.
  */
 function maxPollsForDwell(totalDwellMs: number): number {
-  const extraBuckets = Math.floor(totalDwellMs / 5000);
-  return Math.min(BASE_POLLS + extraBuckets, MAX_POLLS_CAP);
+  const extraBuckets = Math.floor(totalDwellMs / CONFIG.POLLING.DWELL_MS_PER_EXTRA_POLL);
+  return Math.min(CONFIG.POLLING.BASE_MAX_POLLS + extraBuckets, CONFIG.POLLING.CEILING_MAX_POLLS);
 }
 
 // Main hub airport per country — used when a single post mentions multiple places in the same country.
@@ -337,7 +333,7 @@ async function searchFlights(
     let polls = 0;
 
     while (data.status === "RESULT_STATUS_INCOMPLETE" && polls < maxPolls && sessionToken) {
-      await new Promise((r) => setTimeout(r, POLL_DELAY_MS));
+      await new Promise((r) => setTimeout(r, CONFIG.POLLING.INTERVAL_MS));
       polls++;
       const pollRes = await fetch(`${SKYSCANNER_BASE}/poll/${sessionToken}`, {
         method: "POST",
@@ -736,8 +732,8 @@ async function processRequest(message: ContentPayload, windowId: number | undefi
       seen.add(key);
       return true;
     });
-    // If more than 15 destinations from a single slide, it's likely a list/compilation post — skip
-    if (hits.length > 15) {
+    // If more than configured destinations from a single slide, it's likely a list/compilation post — skip
+    if (hits.length > CONFIG.LIMITS.MAX_DESTINATIONS_PER_SLIDE) {
       console.log(`[Roam BG] Skipping — too many destinations (${hits.length}), likely a list post`);
       return;
     }

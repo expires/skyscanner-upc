@@ -3,6 +3,7 @@ import {
   InterestScore,
   WishlistEntry,
 } from "./types.js";
+import { CONFIG } from "./config.js";
 
 function countryFlag(code: string | null): string {
   if (!code || code.length !== 2) return "";
@@ -500,15 +501,14 @@ ${destLines}`;
   narratorError.style.display = "none";
 
   try {
-    const GEMINI_MODEL = "gemma-3-27b-it";
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${CONFIG.GEMINI.NARRATOR_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
 
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { maxOutputTokens: 256, temperature: 1.0 },
+        generationConfig: { maxOutputTokens: CONFIG.GEMINI.MAX_OUTPUT_TOKENS, temperature: CONFIG.GEMINI.TEMPERATURE },
       }),
     });
 
