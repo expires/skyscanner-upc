@@ -699,6 +699,120 @@
       color: rgba(255,255,255,0.7);
     }
 
+    /* Info modal */
+    .info-btn {
+      background: none;
+      border: 1px solid #C1C7CF;
+      color: #626971;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s;
+      font-family: inherit;
+      flex-shrink: 0;
+    }
+
+    .info-btn:hover {
+      border-color: #0062E3;
+      color: #0062E3;
+    }
+
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(5, 32, 60, 0.6);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+
+    .modal-overlay.visible {
+      display: flex;
+    }
+
+    .modal {
+      background: #FFFFFF;
+      border-radius: 12px;
+      box-shadow: 0px 12px 50px 0px rgba(37,32,31,.25);
+      max-width: 350px;
+      width: 100%;
+      max-height: 460px;
+      overflow-y: auto;
+      padding: 20px;
+    }
+
+    .modal-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: #05203C;
+      margin-bottom: 12px;
+    }
+
+    .modal-section {
+      font-size: 11px;
+      font-weight: 700;
+      color: #626971;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-top: 14px;
+      margin-bottom: 6px;
+    }
+
+    .modal-section:first-of-type { margin-top: 0; }
+
+    .modal-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 4px 0;
+      font-size: 12px;
+      color: #161616;
+    }
+
+    .modal-row + .modal-row {
+      border-top: 1px solid #EFF3F8;
+    }
+
+    .modal-weight {
+      font-weight: 700;
+      color: #0062E3;
+      min-width: 40px;
+      text-align: right;
+    }
+
+    .modal-desc {
+      font-size: 11px;
+      color: #626971;
+      line-height: 1.5;
+      margin-top: 8px;
+    }
+
+    .modal-close {
+      display: block;
+      width: 100%;
+      padding: 10px;
+      border: none;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      margin-top: 16px;
+      background: #05203C;
+      color: #FFFFFF;
+      font-family: inherit;
+      transition: background 0.15s;
+    }
+
+    .modal-close:hover { background: #154679; }
+
     /* Score badge on feed items */
     .feed-score-badge {
       display: inline-flex;
@@ -723,7 +837,7 @@
     </div>
     <div class="tabs">
       <button class="tab active" data-tab="feed">Feed</button>
-      <button class="tab" data-tab="ranked">Ranked</button>
+      <button class="tab" data-tab="ranked">Intent</button>
       <button class="tab" data-tab="saved">Saved</button>
       <button class="tab" data-tab="settings">Settings</button>
     </div>
@@ -754,7 +868,10 @@
   <!-- Ranked -->
   <div id="view-ranked" class="view">
     <div class="ranked-header">
-      <span class="ranked-title">Your Travel DNA</span>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <span class="ranked-title">Your Intent</span>
+        <button id="info-btn" class="info-btn" title="How scoring works">?</button>
+      </div>
       <div style="display:flex;align-items:center;gap:8px;">
         <span class="ranked-period">last 30 days</span>
         <button id="ranked-reset" class="clear-btn">Reset</button>
@@ -808,6 +925,42 @@
 
     <button id="btn-save-settings" class="btn btn-primary">Save Settings</button>
     <div id="settings-status" class="settings-status">Settings saved.</div>
+  </div>
+
+  <!-- Scoring Info Modal -->
+  <div id="info-modal" class="modal-overlay">
+    <div class="modal">
+      <div class="modal-title">How Intent Scoring Works</div>
+
+      <div class="modal-section">Discrete Signals</div>
+      <div class="modal-row"><span>Save / bookmark</span><span class="modal-weight">+35</span></div>
+      <div class="modal-row"><span>Share post</span><span class="modal-weight">+30</span></div>
+      <div class="modal-row"><span>Profile click</span><span class="modal-weight">+30</span></div>
+      <div class="modal-row"><span>Rewatch / scroll back</span><span class="modal-weight">+25</span></div>
+      <div class="modal-row"><span>Like</span><span class="modal-weight">+20</span></div>
+      <div class="modal-row"><span>Hashtag click</span><span class="modal-weight">+20</span></div>
+      <div class="modal-row"><span>Scroll back</span><span class="modal-weight">+18</span></div>
+      <div class="modal-row"><span>Comment section opened</span><span class="modal-weight">+15</span></div>
+      <div class="modal-row"><span>Sound on</span><span class="modal-weight">+12</span></div>
+      <div class="modal-row"><span>Caption expanded</span><span class="modal-weight">+10</span></div>
+      <div class="modal-row"><span>Video paused</span><span class="modal-weight">+8</span></div>
+
+      <div class="modal-section">Dwell Time (non-linear)</div>
+      <div class="modal-row"><span>0 &ndash; 5 seconds</span><span class="modal-weight">0.5/s</span></div>
+      <div class="modal-row"><span>5 &ndash; 15 seconds</span><span class="modal-weight">0.75/s</span></div>
+      <div class="modal-row"><span>15 &ndash; 30 seconds</span><span class="modal-weight">1.0/s</span></div>
+      <div class="modal-row"><span>30+ seconds</span><span class="modal-weight">1.5/s</span></div>
+
+      <div class="modal-section">Bonuses</div>
+      <div class="modal-row"><span>Multiple posts about same place</span><span class="modal-weight">+10/post</span></div>
+
+      <div class="modal-section">Time Decay</div>
+      <div class="modal-desc">
+        All signals decay over time with a 7-day half-life. Engagement from 2 weeks ago counts 25% as much as today. Scores are normalised to 0&ndash;100 relative to each other.
+      </div>
+
+      <button id="info-close" class="modal-close">Got it</button>
+    </div>
   </div>
 
   <script src="dist/popup.js" type="module"></script>

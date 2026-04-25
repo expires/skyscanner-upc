@@ -404,6 +404,15 @@ async function renderSaved(): Promise<void> {
 }
 
 const rankedReset = $<HTMLButtonElement>("ranked-reset");
+const infoBtn = $<HTMLButtonElement>("info-btn");
+const infoModal = $<HTMLDivElement>("info-modal");
+const infoClose = $<HTMLButtonElement>("info-close");
+
+infoBtn.addEventListener("click", () => infoModal.classList.add("visible"));
+infoClose.addEventListener("click", () => infoModal.classList.remove("visible"));
+infoModal.addEventListener("click", (e) => {
+  if (e.target === infoModal) infoModal.classList.remove("visible");
+});
 
 rankedReset.addEventListener("click", async () => {
   await chrome.storage.local.set({ engagementLog: [], interestScores: [] });
@@ -496,7 +505,7 @@ async function renderRanked(): Promise<void> {
             </div>
             <span class="ranked-score">${entry.score}</span>
           </div>
-          <div class="ranked-bar-label">Engagement score</div>
+          <div class="ranked-bar-label">Intent score</div>
         </div>
       </div>
       <button class="ranked-breakdown-toggle">
