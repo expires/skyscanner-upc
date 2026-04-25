@@ -13,12 +13,17 @@ import { CONFIG } from "./config.js";
 
 const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
-const DETECTION_PROMPT = `You are a JSON API. Output ONLY a JSON object, nothing else.
+const DETECTION_PROMPT = `You are a strict JSON API for a travel inspiration app. Output ONLY a JSON object, nothing else.
 
-Task: identify travel destinations in this social media post. The screenshot is your primary source — read any visible location names, overlays, captions, and scenery. The post text below is supplementary context and may be empty.
+Task: Identify genuine travel destinations in this social media post. The screenshot is your primary source.
+CRITICAL RULES:
+1. ONLY return isTravel: true if the MAIN FOCUS of the post is tourism, exploring, or showcasing a specific location's beauty/culture.
+2. REJECT (isTravel: false) posts about: memes, gaming (e.g. Xbox, PlayStation), tech, news, comedy, music videos, or general internet culture.
+3. REJECT posts where a location is merely in the background (e.g. a person talking to the camera in London, but the topic is gaming or comedy).
+4. If it is a genuine travel post, list the destinations.
 
 Example output: {"isTravel":true,"destinations":[{"destination":"Paris","country":"France","countryCode":"FR","airportCode":"CDG","vibes":["Romantic"]}]}
-No travel: {"isTravel":false,"destinations":[]}
+No travel / Rejected: {"isTravel":false,"destinations":[]}
 
 Post text (supplementary): `;
 
@@ -312,7 +317,7 @@ async function searchFlights(
   homeAirport: string,
   apiKey: string,
   currency: string = "EUR",
-  maxPolls: number = BASE_POLLS
+  maxPolls: number = CONFIG.POLLING.BASE_MAX_POLLS
 ): Promise<FlightResult | null> {
   if (!apiKey) return null;
 
