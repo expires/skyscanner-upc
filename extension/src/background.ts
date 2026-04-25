@@ -31,8 +31,6 @@ Post text (supplementary): `;
 
 async function getSettings(): Promise<StoredSettings> {
   return (await chrome.storage.sync.get([
-    "GEMINI_API_KEY",
-    "SKYSCANNER_API_KEY",
     "HOME_AIRPORT",
     "CURRENCY",
   ])) as StoredSettings;
@@ -75,95 +73,46 @@ function releaseDetectionSlot(): void {
   if (next) next();
 }
 
-// --- Gemini detection ---
+// --- Backend Proxy ---
+
+async function getDeviceId(): Promise<string> {
+  const stored = await chrome.storage.local.get('roam:deviceId');
+  if (stored['roam:deviceId']) return stored['roam:deviceId'];
+  const id = crypto.randomUUID();
+  await chrome.storage.local.set({ 'roam:deviceId': id });
+  return id;
+}
+
+// --- Gemini detection via Backend ---
 
 async function detectTravel(
   text: string,
   screenshot: string | null,
-  apiKey: string
+  postId: string,
+  platform: 'instagram' | 'tiktok'
 ): Promise<DetectionResult> {
-  const parts: any[] = [];
-
-  parts.push({
-    text: `${DETECTION_PROMPT}${text}`,
-  });
-
-  if (screenshot) {
-    parts.push({
-      inlineData: { mimeType: "image/jpeg", data: screenshot },
-    });
-  }
-
-  const url = `${GEMINI_API_BASE}/${CONFIG.GEMINI.NARRATOR_MODEL}:generateContent?key=${apiKey}`;
-
-  const response = await fetch(url, {
+  const deviceId = await getDeviceId();
+  
+  const response = await fetch(`${CONFIG.BACKEND_URL}/detect`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "x-device-id": deviceId
+    },
     body: JSON.stringify({
-      contents: [{ parts }],
-      generationConfig: {
-        maxOutputTokens: CONFIG.GEMINI.MAX_OUTPUT_TOKENS,
-        temperature: CONFIG.GEMINI.TEMPERATURE,
-      },
+      text,
+      screenshot,
+      postId,
+      platform
     }),
   });
 
   if (!response.ok) {
     const err = await response.text();
-    throw new Error(`Gemini API error: ${response.status} ${err}`);
+    throw new Error(`Backend detection error: ${response.status} ${err}`);
   }
 
-  const data = await response.json();
-  let responseText = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-  if (!responseText) {
-    console.warn("[Roam BG] Empty Gemma response. Full API data:", JSON.stringify(data).slice(0, 500));
-    return { isTravel: false, destinations: [] };
-  }
-  console.log("[Roam BG] Raw Gemma response:", responseText.slice(0, 400));
-
-  // Gemma often "thinks" before outputting JSON. Extract the JSON object from anywhere in the response.
-  function extractJson(text: string): DetectionResult | null {
-    // Try to find a JSON block in markdown fences
-    const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
-    if (fenceMatch) text = fenceMatch[1];
-
-    // Find the first { and match to its closing }
-    const start = text.indexOf("{");
-    if (start === -1) return null;
-
-    let depth = 0;
-    for (let i = start; i < text.length; i++) {
-      if (text[i] === "{") depth++;
-      else if (text[i] === "}") {
-        depth--;
-        if (depth === 0) {
-          try {
-            return JSON.parse(text.slice(start, i + 1)) as DetectionResult;
-          } catch {
-            return null;
-          }
-        }
-      }
-    }
-
-    // Truncated — try to repair by closing open structures
-    const partial = text.slice(start);
-    const lastComplete = partial.lastIndexOf("},");
-    if (lastComplete > 0) {
-      try {
-        return JSON.parse(partial.slice(0, lastComplete + 1) + "]}") as DetectionResult;
-      } catch {
-        // Give up
-      }
-    }
-    return null;
-  }
-
-  const result = extractJson(responseText);
-  if (result) return result;
-
-  console.warn("[Roam BG] Could not extract JSON from Gemma response");
-  return { isTravel: false, destinations: [] };
+  return response.json();
 }
 
 // --- Skyscanner ---
@@ -293,137 +242,40 @@ function consolidateByCountry(hits: DestinationHit[]): DestinationHit[] {
   return result;
 }
 
-function buildSkyscannerQuery(homeAirport: string, destAirport: string, currency: string = "EUR") {
-  return {
-    query: {
-      market: "ES",
-      locale: "en-GB",
-      currency,
-      queryLegs: [
-        {
-          originPlaceId: { iata: homeAirport },
-          destinationPlaceId: { iata: destAirport },
-          date: getNextWeekendDate(),
-        },
-      ],
-      adults: 1,
-      cabinClass: "CABIN_CLASS_ECONOMY",
-    },
-  };
-}
-
 async function searchFlights(
   destAirport: string,
   homeAirport: string,
-  apiKey: string,
   currency: string = "EUR",
   maxPolls: number = CONFIG.POLLING.BASE_MAX_POLLS
 ): Promise<FlightResult | null> {
-  if (!apiKey) return null;
-
   try {
-    const createRes = await fetch(`${SKYSCANNER_BASE}/create`, {
+    const deviceId = await getDeviceId();
+    const response = await fetch(`${CONFIG.BACKEND_URL}/flights`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": apiKey },
-      body: JSON.stringify(buildSkyscannerQuery(homeAirport, destAirport, currency)),
+      headers: {
+        "Content-Type": "application/json",
+        "x-device-id": deviceId
+      },
+      body: JSON.stringify({
+        iataCode: destAirport,
+        homeAirport,
+        currency,
+        maxPolls
+      }),
     });
 
-    if (!createRes.ok) {
-      console.warn("[Roam BG] Skyscanner error", createRes.status, await createRes.text());
+    if (!response.ok) {
+      console.warn("[Roam BG] Backend flights error", response.status, await response.text());
       return null;
     }
 
-    let data = await createRes.json();
-    const sessionToken = data.sessionToken;
-    let polls = 0;
-
-    while (data.status === "RESULT_STATUS_INCOMPLETE" && polls < maxPolls && sessionToken) {
-      await new Promise((r) => setTimeout(r, CONFIG.POLLING.INTERVAL_MS));
-      polls++;
-      const pollRes = await fetch(`${SKYSCANNER_BASE}/poll/${sessionToken}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-api-key": apiKey },
-        body: JSON.stringify(buildSkyscannerQuery(homeAirport, destAirport, currency)),
-      });
-      if (!pollRes.ok) break;
-      data = await pollRes.json();
-    }
-
-    console.log(`[Roam BG] Skyscanner polled ${polls}/${maxPolls} times for ${destAirport}`);
-    return parseSkyscannerResult(data, homeAirport, destAirport, currency);
+    const data = await response.json();
+    if (data.error) return null;
+    return data;
   } catch (e) {
-    console.warn("[Roam BG] Skyscanner fetch failed:", e);
+    console.warn("[Roam BG] Backend flights fetch failed:", e);
     return null;
   }
-}
-
-function getItineraryPrice(itin: any): number {
-  const raw = parseFloat(itin.pricingOptions?.[0]?.price?.amount ?? "Infinity");
-  return raw > 1000 ? raw / 1000 : raw;
-}
-
-function getItineraryDuration(itin: any, legs: any): number {
-  const legId = itin.legIds?.[0];
-  if (!legId || !legs?.[legId]) return Infinity;
-  return legs[legId].durationInMinutes ?? Infinity;
-}
-
-function parseSkyscannerResult(data: any, origin: string, dest: string, currency: string = "EUR"): FlightResult | null {
-  const itineraries = data?.content?.results?.itineraries;
-  if (!itineraries) return null;
-
-  const legs = data?.content?.results?.legs;
-  const carriers = data?.content?.results?.carriers;
-  const entries = Object.values(itineraries) as any[];
-  if (entries.length === 0) return null;
-
-  const minPrice = Math.min(...entries.map((e) => getItineraryPrice(e)));
-  const maxPrice = Math.max(...entries.map((e) => getItineraryPrice(e)));
-  const minDur = Math.min(...entries.map((e) => getItineraryDuration(e, legs)));
-  const maxDur = Math.max(...entries.map((e) => getItineraryDuration(e, legs)));
-  const priceRange = maxPrice - minPrice || 1;
-  const durRange = maxDur - minDur || 1;
-
-  entries.sort((a: any, b: any) => {
-    const sA = (getItineraryPrice(a) - minPrice) / priceRange + (getItineraryDuration(a, legs) - minDur) / durRange;
-    const sB = (getItineraryPrice(b) - minPrice) / priceRange + (getItineraryDuration(b, legs) - minDur) / durRange;
-    return sA - sB;
-  });
-
-  const best = entries[0];
-  const pricing = best.pricingOptions?.[0];
-  if (!pricing) return null;
-
-  const price = Math.round(getItineraryPrice(best));
-  const durationMinutes = getItineraryDuration(best, legs);
-
-  let airlineName = "Unknown";
-  const legId = best.legIds?.[0];
-  if (legId && legs && carriers) {
-    const leg = legs[legId];
-    const carrierId = leg?.operatingCarrierIds?.[0] ?? leg?.marketingCarrierIds?.[0];
-    if (carrierId) airlineName = carriers[carrierId]?.name ?? "Unknown";
-  }
-
-  const date = getNextWeekendDate();
-  const dateStr = `${date.year}${String(date.month).padStart(2, "0")}${String(date.day).padStart(2, "0")}`;
-  const fallbackLink = `https://www.skyscanner.net/transport/flights/${origin.toLowerCase()}/${dest.toLowerCase()}/${dateStr}/`;
-
-  return {
-    price,
-    currency,
-    airline: airlineName,
-    durationMinutes: durationMinutes === Infinity ? 0 : Math.round(durationMinutes),
-    deeplink: pricing.items?.[0]?.deepLink || fallbackLink,
-  };
-}
-
-function getNextWeekendDate(): { year: number; month: number; day: number } {
-  const now = new Date();
-  const daysUntilFriday = (5 - now.getDay() + 7) % 7 || 7;
-  const friday = new Date(now);
-  friday.setDate(now.getDate() + daysUntilFriday);
-  return { year: friday.getFullYear(), month: friday.getMonth() + 1, day: friday.getDate() };
 }
 
 // --- Storage helpers ---
@@ -652,7 +504,6 @@ async function processDestination(
     const flight = await searchFlights(
       airportCode,
       settings.HOME_AIRPORT || "BCN",
-      settings.SKYSCANNER_API_KEY,
       settings.CURRENCY || "EUR",
       maxPolls
     );
@@ -692,10 +543,6 @@ chrome.storage.local.set({ loadingDestinations: [] });
 async function processRequest(message: ContentPayload, windowId: number | undefined): Promise<void> {
   try {
     const settings = await getSettings();
-    if (!settings.GEMINI_API_KEY) {
-      console.warn("Roam: No Gemini API key set.");
-      return;
-    }
 
     // Capture screenshot
     let screenshot: string | null = null;
@@ -718,7 +565,8 @@ async function processRequest(message: ContentPayload, windowId: number | undefi
     await acquireDetectionSlot();
     let detection: DetectionResult;
     try {
-      detection = await detectTravel(fullText, screenshot, settings.GEMINI_API_KEY);
+      const platform = message.trigger.includes("tiktok") ? "tiktok" : "instagram";
+      detection = await detectTravel(fullText, screenshot, message.postId, platform);
     } finally {
       releaseDetectionSlot();
     }
@@ -894,7 +742,30 @@ async function handleEngagementEvent(msg: {
     interestScores: scores,
   });
 
+  // Sync to backend (fire and forget)
+  syncEngagementToBackend(event, scores).catch((err) =>
+    console.warn("[Roam BG] Failed to sync engagement to backend:", err)
+  );
+
   console.log(`[Roam BG] Engagement: ${msg.eventType} for ${dest.destination} (score: ${scores.find(s => s.destination === dest.destination)?.score ?? 0})`);
+}
+
+async function syncEngagementToBackend(event: EngagementEvent, scores: InterestScore[]): Promise<void> {
+  const deviceId = await getDeviceId();
+  
+  // 1. Sync event
+  await fetch(`${CONFIG.BACKEND_URL}/events`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-device-id": deviceId },
+    body: JSON.stringify({ events: [event] })
+  });
+
+  // 2. Sync updated scores
+  await fetch(`${CONFIG.BACKEND_URL}/scores`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-device-id": deviceId },
+    body: JSON.stringify({ scores })
+  });
 }
 
 // --- Message listener ---

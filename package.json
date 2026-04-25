@@ -1,15 +1,17 @@
 {
-  "name": "roam-extension",
-  "version": "0.1.0",
-  "description": "Roam, powered by Skyscanner",
+  "name": "roam-workspace",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "extension",
+    "backend"
+  ],
   "scripts": {
-    "build": "tsc && tsc -p tsconfig.content.json",
-    "watch": "tsc --watch & tsc -p tsconfig.content.json --watch"
-  },
-  "dependencies": {},
-  "devDependencies": {
-    "typescript": "^5.5.3",
-    "@types/chrome": "^0.0.287"
-  },
-  "private": true
+    "server": "npm run dev --workspace=backend",
+    "start:backend": "npm run start --workspace=backend",
+    "build:extension": "npm run build --workspace=roam-extension",
+    "build:backend": "npm run build --workspace=backend",
+    "build": "npm run build --workspaces",
+    "watch:extension": "npm run watch --workspace=roam-extension"
+  }
 }

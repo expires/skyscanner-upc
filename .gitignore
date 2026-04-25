@@ -10,6 +10,9 @@ yarn-error.log*
 .pnp.js
 
 .vscode/*
-.idea/
+.idea/*
 .DS_Store
 .env
+
+*/dist
+*/node_modules

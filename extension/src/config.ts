@@ -1,4 +1,5 @@
 export const CONFIG = {
+  BACKEND_URL: "http://localhost:3000",
   // Engagement Scoring Points & Multipliers
   SCORING: {
     WEIGHTS: {

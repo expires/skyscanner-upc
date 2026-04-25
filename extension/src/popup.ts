@@ -446,12 +446,6 @@ rankedReset.addEventListener("click", async () => {
 async function generateNarrative(scores: InterestScore[], force = false): Promise<void> {
   if (!force && cachedNarrative) return;
 
-  const { GEMINI_API_KEY } = await chrome.storage.sync.get("GEMINI_API_KEY") as { GEMINI_API_KEY?: string };
-  if (!GEMINI_API_KEY) {
-    showNarratorError("Add your Gemini API key in Settings to enable AI insights.");
-    return;
-  }
-
   if (scores.length === 0) return;
 
   // Build prompt
@@ -501,20 +495,25 @@ ${destLines}`;
   narratorError.style.display = "none";
 
   try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${CONFIG.GEMINI.NARRATOR_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+    // Get device ID from local storage so backend knows who we are
+    const { "roam:deviceId": deviceId } = await chrome.storage.local.get("roam:deviceId");
 
-    const res = await fetch(url, {
+    const res = await fetch(`${CONFIG.BACKEND_URL}/summary`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "x-device-id": deviceId || "unknown"
+      },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { maxOutputTokens: CONFIG.GEMINI.MAX_OUTPUT_TOKENS, temperature: CONFIG.GEMINI.TEMPERATURE },
+        prompt,
+        maxTokens: CONFIG.GEMINI.MAX_OUTPUT_TOKENS,
+        temperature: CONFIG.GEMINI.TEMPERATURE
       }),
     });
 
     if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(`Gemini ${res.status}: ${errText.slice(0, 120)}`);
+      const err = await res.json();
+      throw new Error(`Backend Error: ${err.error ?? res.status}`);
     }
 
     const data = await res.json();
@@ -720,17 +719,13 @@ async function renderRanked(): Promise<void> {
 const inputCurrency = $<HTMLSelectElement>("input-currency");
 
 async function loadSettings(): Promise<void> {
-  const s = await chrome.storage.sync.get(["GEMINI_API_KEY", "SKYSCANNER_API_KEY", "HOME_AIRPORT", "CURRENCY"]);
-  inputGemini.value = s.GEMINI_API_KEY ?? "";
-  inputSkyscanner.value = s.SKYSCANNER_API_KEY ?? "";
+  const s = await chrome.storage.sync.get(["HOME_AIRPORT", "CURRENCY"]);
   inputAirport.value = s.HOME_AIRPORT ?? "";
   inputCurrency.value = s.CURRENCY ?? "EUR";
 }
 
 btnSaveSettings.addEventListener("click", async () => {
   await chrome.storage.sync.set({
-    GEMINI_API_KEY: inputGemini.value.trim(),
-    SKYSCANNER_API_KEY: inputSkyscanner.value.trim(),
     HOME_AIRPORT: inputAirport.value.trim().toUpperCase(),
     CURRENCY: inputCurrency.value,
   });
