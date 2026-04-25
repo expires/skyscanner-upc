@@ -13,6 +13,14 @@ function getNextWeekendDate(): { year: number; month: number; day: number } {
   return { year: friday.getFullYear(), month: friday.getMonth() + 1, day: friday.getDate() };
 }
 
+function getNextSundayDate(): { year: number; month: number; day: number } {
+  const now = new Date();
+  const daysUntilFriday = (5 - now.getDay() + 7) % 7 || 7;
+  const sunday = new Date(now);
+  sunday.setDate(now.getDate() + daysUntilFriday + 2); // Return on Sunday
+  return { year: sunday.getFullYear(), month: sunday.getMonth() + 1, day: sunday.getDate() };
+}
+
 function buildSkyscannerQuery(homeAirport: string, destAirport: string, currency: string = "EUR") {
   return {
     query: {
@@ -24,6 +32,11 @@ function buildSkyscannerQuery(homeAirport: string, destAirport: string, currency
           originPlaceId: { iata: homeAirport },
           destinationPlaceId: { iata: destAirport },
           date: getNextWeekendDate(),
+        },
+        {
+          originPlaceId: { iata: destAirport },
+          destinationPlaceId: { iata: homeAirport },
+          date: getNextSundayDate(),
         },
       ],
       adults: 1,
@@ -38,9 +51,12 @@ function getItineraryPrice(itin: any): number {
 }
 
 function getItineraryDuration(itin: any, legs: any): number {
-  const legId = itin.legIds?.[0];
-  if (!legId || !legs?.[legId]) return Infinity;
-  return legs[legId].durationInMinutes ?? Infinity;
+  if (!itin.legIds) return Infinity;
+  let totalDur = 0;
+  for (const legId of itin.legIds) {
+    if (legs?.[legId]) totalDur += legs[legId].durationInMinutes ?? 0;
+  }
+  return totalDur || Infinity;
 }
 
 function parseSkyscannerResult(data: any, origin: string, dest: string, currency: string): any {
@@ -80,9 +96,11 @@ function parseSkyscannerResult(data: any, origin: string, dest: string, currency
     if (carrierId) airlineName = carriers[carrierId]?.name ?? "Unknown";
   }
 
-  const date = getNextWeekendDate();
-  const dateStr = `${date.year}${String(date.month).padStart(2, "0")}${String(date.day).padStart(2, "0")}`;
-  const fallbackLink = `https://www.skyscanner.net/transport/flights/${origin.toLowerCase()}/${dest.toLowerCase()}/${dateStr}/`;
+  const dateOut = getNextWeekendDate();
+  const dateRet = getNextSundayDate();
+  const dateStrOut = `${dateOut.year}${String(dateOut.month).padStart(2, "0")}${String(dateOut.day).padStart(2, "0")}`;
+  const dateStrRet = `${dateRet.year}${String(dateRet.month).padStart(2, "0")}${String(dateRet.day).padStart(2, "0")}`;
+  const fallbackLink = `https://www.skyscanner.net/transport/flights/${origin.toLowerCase()}/${dest.toLowerCase()}/${dateStrOut}/${dateStrRet}/`;
 
   return {
     price,
