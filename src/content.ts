@@ -21,6 +21,8 @@ let videoTickInterval: ReturnType<typeof setInterval> | null = null;
 let lastSentKey = "";
 let lastSlideIndex = -1;
 let currentPostId = "";
+let postFinished = false; // true once the video has ended for this post
+let currentVideo: HTMLVideoElement | null = null;
 
 function isTikTok(): boolean {
   return location.hostname.includes("tiktok.com");
@@ -108,6 +110,7 @@ function extractContent(): ContentPayload | null {
 // --- Send to background ---
 
 function sendPayload(payload: ContentPayload): void {
+  if (postFinished) return;
   console.log(`[Roam] Sending (${payload.trigger}):`, payload.description.slice(0, 50));
   chrome.runtime.sendMessage(payload);
 }
@@ -132,6 +135,12 @@ function getPostId(): string {
   return "";
 }
 
+function onVideoEnded(): void {
+  console.log("[Roam] Video ended, stopping actions for this post");
+  postFinished = true;
+  stopVideoTick();
+}
+
 function handlePostChange(): void {
   const newPostId = getPostId();
   if (!newPostId) return;
@@ -140,7 +149,14 @@ function handlePostChange(): void {
     currentPostId = newPostId;
     lastSentKey = "";
     lastSlideIndex = -1;
+    postFinished = false;
     console.log("[Roam] New post detected:", newPostId.slice(0, 30));
+
+    // Detach previous video listener
+    if (currentVideo) {
+      currentVideo.removeEventListener("ended", onVideoEnded);
+      currentVideo = null;
+    }
 
     // Stop previous video tick
     stopVideoTick();
@@ -148,8 +164,13 @@ function handlePostChange(): void {
     // Extract text and send
     handleTextChange();
 
-    // Start video tick if this is a video
-    startVideoTickIfNeeded();
+    // Attach ended listener and start tick if video
+    const video = document.querySelector("video");
+    if (video) {
+      currentVideo = video;
+      video.addEventListener("ended", onVideoEnded);
+      startVideoTickIfNeeded();
+    }
   }
 }
 

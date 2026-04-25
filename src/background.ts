@@ -322,10 +322,31 @@ async function removeLoading(destination: string): Promise<void> {
   await chrome.storage.local.set({ loadingDestinations: updated });
 }
 
-// --- Parallel processing with concurrency limit ---
+// --- Global Skyscanner semaphore (max 5 concurrent flight searches) ---
 
-const MAX_CONCURRENT = 5;
+const MAX_CONCURRENT_FLIGHTS = 5;
+let activeFlights = 0;
+const flightQueue: (() => void)[] = [];
 const flightCache = new Map<string, FlightResult | null>();
+
+function acquireFlightSlot(): Promise<void> {
+  if (activeFlights < MAX_CONCURRENT_FLIGHTS) {
+    activeFlights++;
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    flightQueue.push(() => {
+      activeFlights++;
+      resolve();
+    });
+  });
+}
+
+function releaseFlightSlot(): void {
+  activeFlights--;
+  const next = flightQueue.shift();
+  if (next) next();
+}
 
 async function processDestination(
   hit: DestinationHit,
@@ -334,7 +355,7 @@ async function processDestination(
 ): Promise<void> {
   const airportCode = hit.airportCode;
 
-  // Check cache first
+  // Check cache first — no slot needed
   if (flightCache.has(airportCode)) {
     const cachedFlight = flightCache.get(airportCode) ?? null;
     await addDetection(hit, cachedFlight, sourceUrl);
@@ -342,36 +363,30 @@ async function processDestination(
     return;
   }
 
-  const flight = await searchFlights(
-    airportCode,
-    settings.HOME_AIRPORT || "BCN",
-    settings.SKYSCANNER_API_KEY
-  );
-
-  flightCache.set(airportCode, flight);
-  console.log(`[Roam BG] Flight for ${hit.destination}:`, flight ? `${flight.price} ${flight.currency} · ${flight.airline}` : "none");
-
-  await addDetection(hit, flight, sourceUrl);
-  await removeLoading(hit.destination);
-}
-
-async function runWithConcurrency<T>(
-  tasks: (() => Promise<T>)[],
-  limit: number
-): Promise<T[]> {
-  const results: T[] = [];
-  let idx = 0;
-
-  async function worker(): Promise<void> {
-    while (idx < tasks.length) {
-      const i = idx++;
-      results[i] = await tasks[i]();
+  // Wait for a slot
+  await acquireFlightSlot();
+  try {
+    // Double-check cache (another request may have filled it while we waited)
+    if (flightCache.has(airportCode)) {
+      await addDetection(hit, flightCache.get(airportCode) ?? null, sourceUrl);
+      await removeLoading(hit.destination);
+      return;
     }
-  }
 
-  const workers = Array.from({ length: Math.min(limit, tasks.length) }, () => worker());
-  await Promise.all(workers);
-  return results;
+    const flight = await searchFlights(
+      airportCode,
+      settings.HOME_AIRPORT || "BCN",
+      settings.SKYSCANNER_API_KEY
+    );
+
+    flightCache.set(airportCode, flight);
+    console.log(`[Roam BG] Flight for ${hit.destination}:`, flight ? `${flight.price} ${flight.currency} · ${flight.airline}` : "none");
+
+    await addDetection(hit, flight, sourceUrl);
+    await removeLoading(hit.destination);
+  } finally {
+    releaseFlightSlot();
+  }
 }
 
 // --- Main queue ---
@@ -429,11 +444,10 @@ async function processRequest(req: QueuedRequest): Promise<void> {
     // Mark all as loading
     await setLoading(hits.map((h) => h.destination));
 
-    // Fetch flights in parallel (max 5 concurrent)
-    const tasks = hits.map(
-      (hit) => () => processDestination(hit, message.pageUrl, settings)
+    // Fire all flight searches — global semaphore limits to 5 concurrent
+    await Promise.all(
+      hits.map((hit) => processDestination(hit, message.pageUrl, settings))
     );
-    await runWithConcurrency(tasks, MAX_CONCURRENT);
   } catch (err) {
     console.error("[Roam BG] Error:", err);
     await chrome.storage.local.set({ loadingDestinations: [] });
