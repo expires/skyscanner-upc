@@ -46,7 +46,7 @@ const savedEmpty = $<HTMLDivElement>("saved-empty");
 const savedList = $<HTMLDivElement>("saved-list");
 const btnSaveSettings = $<HTMLButtonElement>("btn-save-settings");
 const settingsStatus = $<HTMLDivElement>("settings-status");
-const inputAnthropic = $<HTMLInputElement>("input-anthropic");
+const inputGemini = $<HTMLInputElement>("input-gemini");
 const inputSkyscanner = $<HTMLInputElement>("input-skyscanner");
 const inputAirport = $<HTMLInputElement>("input-airport");
 
@@ -523,8 +523,8 @@ async function renderRanked(): Promise<void> {
 const inputCurrency = $<HTMLSelectElement>("input-currency");
 
 async function loadSettings(): Promise<void> {
-  const s = await chrome.storage.sync.get(["ANTHROPIC_API_KEY", "SKYSCANNER_API_KEY", "HOME_AIRPORT", "CURRENCY"]);
-  inputAnthropic.value = s.ANTHROPIC_API_KEY ?? "";
+  const s = await chrome.storage.sync.get(["GEMINI_API_KEY", "SKYSCANNER_API_KEY", "HOME_AIRPORT", "CURRENCY"]);
+  inputGemini.value = s.GEMINI_API_KEY ?? "";
   inputSkyscanner.value = s.SKYSCANNER_API_KEY ?? "";
   inputAirport.value = s.HOME_AIRPORT ?? "";
   inputCurrency.value = s.CURRENCY ?? "EUR";
@@ -532,7 +532,7 @@ async function loadSettings(): Promise<void> {
 
 btnSaveSettings.addEventListener("click", async () => {
   await chrome.storage.sync.set({
-    ANTHROPIC_API_KEY: inputAnthropic.value.trim(),
+    GEMINI_API_KEY: inputGemini.value.trim(),
     SKYSCANNER_API_KEY: inputSkyscanner.value.trim(),
     HOME_AIRPORT: inputAirport.value.trim().toUpperCase(),
     CURRENCY: inputCurrency.value,

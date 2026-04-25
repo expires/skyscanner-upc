@@ -118,7 +118,7 @@ export interface StoredState {
 
 // Settings stored in chrome.storage.sync
 export interface StoredSettings {
-  ANTHROPIC_API_KEY: string;
+  GEMINI_API_KEY: string;
   SKYSCANNER_API_KEY: string;
   HOME_AIRPORT: string;
   CURRENCY: string;

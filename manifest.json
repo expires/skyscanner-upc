@@ -5,10 +5,7 @@
   "description": "Roam, powered by Skyscanner — passive travel intent detection",
   "permissions": ["storage", "activeTab", "tabs"],
   "host_permissions": [
-    "https://www.tiktok.com/*",
-    "https://www.instagram.com/*",
-    "https://partners.api.skyscanner.net/*",
-    "https://api.anthropic.com/*"
+    "<all_urls>"
   ],
   "background": {
     "service_worker": "dist/background.js",

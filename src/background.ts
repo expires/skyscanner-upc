@@ -10,40 +10,23 @@ import {
 } from "./types.js";
 import { computeScores } from "./scorer.js";
 
-const CLAUDE_MODEL = "claude-haiku-4-5-20251001";
-const CLAUDE_API_URL = "https://api.anthropic.com/v1/messages";
+const GEMINI_MODEL = "gemma-3-27b-it";
+const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
-const CLAUDE_PROMPT = `You are a travel content detector analyzing social media content. You will be given post text and optionally a screenshot. Use BOTH the text and visual content to identify travel destinations.
+const DETECTION_PROMPT = `You are a JSON API. Output ONLY a JSON object, nothing else.
 
-Respond ONLY with valid JSON, no markdown, no explanation:
-{
-  "isTravel": boolean,
-  "destinations": [
-    {
-      "destination": string,
-      "country": string,
-      "countryCode": string,
-      "airportCode": string,
-      "vibes": string[]
-    }
-  ]
-}
+Task: identify travel destinations in this social media post. Read any place names from the image text overlay.
 
-Rules:
-- IGNORE the creator/account username — it is NOT content. A post by "travel_brazil" showing Monaco is about Monaco, NOT Brazil
-- "destination" means a CITY or REGION you would fly to — NOT individual landmarks, beaches, caves, or attractions within that city/region
-- If a post shows multiple spots within the same city/region (e.g. Navagio Beach, Turtle Island, Eros Cave are all in Zakynthos), return ONE entry for the city/region (Zakynthos) with vibes that capture the highlights
-- Only return multiple destinations if they are in genuinely DIFFERENT cities/regions with DIFFERENT airports (e.g. "Barcelona and Tokyo" = 2 destinations, "5 beaches in Bali" = 1 destination)
-- Up to 5 destinations max
-- Each destination must have: city/region name, country, countryCode (ISO 3166-1 alpha-2), airportCode (nearest major IATA), and up to 8 vibe/mood tags (e.g. "Beach", "Budget", "Nightlife", "Romantic", "Historic", "Adventure", "Food", "Scenic")
-- Use the screenshot to identify destinations from landmarks, text overlays, or location pins even if the caption is vague
-- If not travel content, set isTravel to false and destinations to []`;
+Example output: {"isTravel":true,"destinations":[{"destination":"Paris","country":"France","countryCode":"FR","airportCode":"CDG","vibes":["Romantic"]}]}
+No travel: {"isTravel":false,"destinations":[]}
+
+Post caption: `;
 
 // --- Settings ---
 
 async function getSettings(): Promise<StoredSettings> {
   return (await chrome.storage.sync.get([
-    "ANTHROPIC_API_KEY",
+    "GEMINI_API_KEY",
     "SKYSCANNER_API_KEY",
     "HOME_AIRPORT",
     "CURRENCY",
@@ -65,71 +48,117 @@ async function captureTab(windowId: number): Promise<string | null> {
   }
 }
 
-// --- Claude detection ---
+// --- Detection API rate limiter (max 2 concurrent calls) ---
+
+const MAX_CONCURRENT_DETECTIONS = 5;
+let activeDetections = 0;
+const detectionQueue: (() => void)[] = [];
+
+function acquireDetectionSlot(): Promise<void> {
+  if (activeDetections < MAX_CONCURRENT_DETECTIONS) {
+    activeDetections++;
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    detectionQueue.push(() => { activeDetections++; resolve(); });
+  });
+}
+
+function releaseDetectionSlot(): void {
+  activeDetections--;
+  const next = detectionQueue.shift();
+  if (next) next();
+}
+
+// --- Gemini detection ---
 
 async function detectTravel(
   text: string,
   screenshot: string | null,
   apiKey: string
 ): Promise<DetectionResult> {
-  const content: any[] = [];
+  const parts: any[] = [];
+
+  parts.push({
+    text: `${DETECTION_PROMPT}${text}`,
+  });
 
   if (screenshot) {
-    content.push({
-      type: "image",
-      source: { type: "base64", media_type: "image/jpeg", data: screenshot },
+    parts.push({
+      inlineData: { mimeType: "image/jpeg", data: screenshot },
     });
   }
 
-  content.push({
-    type: "text",
-    text: `${CLAUDE_PROMPT}\n\nPost text: ${text}`,
-  });
+  const url = `${GEMINI_API_BASE}/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
 
-  const response = await fetch(CLAUDE_API_URL, {
+  const response = await fetch(url, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      model: CLAUDE_MODEL,
-      max_tokens: 1024,
-      messages: [{ role: "user", content }],
+      contents: [{ parts }],
+      generationConfig: {
+        maxOutputTokens: 1024,
+        temperature: 0.0,
+      },
     }),
   });
 
   if (!response.ok) {
     const err = await response.text();
-    throw new Error(`Claude API error: ${response.status} ${err}`);
+    throw new Error(`Gemini API error: ${response.status} ${err}`);
   }
 
   const data = await response.json();
-  let responseText = data.content?.[0]?.text ?? "{}";
-  responseText = responseText
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/\s*```$/, "")
-    .trim();
+  let responseText = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+  if (!responseText) {
+    console.warn("[Roam BG] Empty Gemma response. Full API data:", JSON.stringify(data).slice(0, 500));
+    return { isTravel: false, destinations: [] };
+  }
+  console.log("[Roam BG] Raw Gemma response:", responseText.slice(0, 400));
 
-  try {
-    return JSON.parse(responseText) as DetectionResult;
-  } catch {
-    // Response may be truncated — try to salvage by closing open arrays/objects
-    console.warn("[Roam BG] JSON parse failed, attempting repair");
-    // Find the last complete destination object by finding the last "},"
-    const lastComplete = responseText.lastIndexOf("},");
+  // Gemma often "thinks" before outputting JSON. Extract the JSON object from anywhere in the response.
+  function extractJson(text: string): DetectionResult | null {
+    // Try to find a JSON block in markdown fences
+    const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (fenceMatch) text = fenceMatch[1];
+
+    // Find the first { and match to its closing }
+    const start = text.indexOf("{");
+    if (start === -1) return null;
+
+    let depth = 0;
+    for (let i = start; i < text.length; i++) {
+      if (text[i] === "{") depth++;
+      else if (text[i] === "}") {
+        depth--;
+        if (depth === 0) {
+          try {
+            return JSON.parse(text.slice(start, i + 1)) as DetectionResult;
+          } catch {
+            return null;
+          }
+        }
+      }
+    }
+
+    // Truncated — try to repair by closing open structures
+    const partial = text.slice(start);
+    const lastComplete = partial.lastIndexOf("},");
     if (lastComplete > 0) {
-      const repaired = responseText.slice(0, lastComplete + 1) + "]}";
       try {
-        return JSON.parse(repaired) as DetectionResult;
+        return JSON.parse(partial.slice(0, lastComplete + 1) + "]}") as DetectionResult;
       } catch {
         // Give up
       }
     }
-    return { isTravel: false, destinations: [] };
+    return null;
   }
+
+  const result = extractJson(responseText);
+  if (result) return result;
+
+  console.warn("[Roam BG] Could not extract JSON from Gemma response");
+  return { isTravel: false, destinations: [] };
 }
 
 // --- Skyscanner ---
@@ -427,8 +456,8 @@ chrome.storage.local.set({ loadingDestinations: [] });
 async function processRequest(message: ContentPayload, windowId: number | undefined): Promise<void> {
   try {
     const settings = await getSettings();
-    if (!settings.ANTHROPIC_API_KEY) {
-      console.warn("Roam: No Anthropic API key set.");
+    if (!settings.GEMINI_API_KEY) {
+      console.warn("Roam: No Gemini API key set.");
       return;
     }
 
@@ -442,8 +471,21 @@ async function processRequest(message: ContentPayload, windowId: number | undefi
       .filter(Boolean)
       .join(" ");
 
+    // Without a screenshot, different slides of the same post have identical input — skip
+    if (!screenshot && message.slideIndex > 0) {
+      console.log(`[Roam BG] Skipping slide ${message.slideIndex} (no screenshot, same text as slide 0)`);
+      return;
+    }
+
     console.log(`[Roam BG] Processing (${message.trigger}, slide ${message.slideIndex}):`, fullText.slice(0, 60), screenshot ? "+ img" : "");
-    const detection = await detectTravel(fullText, screenshot, settings.ANTHROPIC_API_KEY);
+
+    await acquireDetectionSlot();
+    let detection: DetectionResult;
+    try {
+      detection = await detectTravel(fullText, screenshot, settings.GEMINI_API_KEY);
+    } finally {
+      releaseDetectionSlot();
+    }
 
     if (!detection.isTravel || detection.destinations.length === 0) {
       console.log("[Roam BG] Not travel content");
