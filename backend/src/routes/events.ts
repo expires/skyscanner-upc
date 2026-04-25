@@ -3,6 +3,8 @@ import { requireDeviceId } from '../middleware/deviceId';
 import { getEventsCollection, EventDocument } from '../db/mongo';
 import { EngagementEvent } from '../types';
 
+import { streamEventsToPowerBI } from '../services/powerbi';
+
 const router = Router();
 
 router.post('/', requireDeviceId, async (req, res) => {
@@ -23,6 +25,9 @@ router.post('/', requireDeviceId, async (req, res) => {
 
     if (docs.length > 0) {
       await collection.insertMany(docs);
+      
+      // stream to Power BI (V5) — fire and forget
+      streamEventsToPowerBI(docs).catch(() => {});
     }
     
     res.json({ success: true, inserted: docs.length });

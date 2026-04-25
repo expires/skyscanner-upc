@@ -193,14 +193,23 @@ const COUNTRY_HUB: Record<string, { airportCode: string; city: string }> = {
  * one entry using the country's main hub airport. Vibes are merged from all hits.
  */
 function consolidateByCountry(hits: DestinationHit[]): DestinationHit[] {
+  // Countries that are too large to consolidate (cities > 2 hours apart)
+  const NO_CONSOLIDATION = new Set(['US', 'CA', 'AU', 'BR', 'RU', 'CN', 'IN', 'MX', 'AR']);
+  
   const byCountry = new Map<string, DestinationHit[]>();
+  const result: DestinationHit[] = [];
+
   for (const hit of hits) {
     const code = hit.countryCode.toUpperCase();
-    if (!byCountry.has(code)) byCountry.set(code, []);
-    byCountry.get(code)!.push(hit);
+    if (NO_CONSOLIDATION.has(code)) {
+      result.push(hit); // Do not consolidate, keep distinct
+    } else {
+      if (!byCountry.has(code)) byCountry.set(code, []);
+      byCountry.get(code)!.push(hit);
+    }
   }
 
-  const result: DestinationHit[] = [];
+
   for (const [countryCode, countryHits] of byCountry) {
     const hub = COUNTRY_HUB[countryCode];
     const mergedVibes = [...new Set(countryHits.flatMap((h) => h.vibes))].slice(0, 3);
@@ -351,11 +360,14 @@ async function addDetection(
  * is preserved. The cheapest flight across all entries is kept.
  */
 function consolidateFeed(detections: DetectedEntry[]): DetectedEntry[] {
+  // Countries that are too large to consolidate (cities > 2 hours apart)
+  const NO_CONSOLIDATION = new Set(['US', 'CA', 'AU', 'BR', 'RU', 'CN', 'IN', 'MX', 'AR']);
+
   // Group indices by countryCode
   const byCountry = new Map<string, number[]>();
   for (let i = 0; i < detections.length; i++) {
     const code = detections[i].countryCode?.toUpperCase();
-    if (!code) continue;
+    if (!code || NO_CONSOLIDATION.has(code)) continue; // Skip large countries
     if (!byCountry.has(code)) byCountry.set(code, []);
     byCountry.get(code)!.push(i);
   }

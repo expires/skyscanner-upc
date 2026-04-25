@@ -3,6 +3,8 @@ import { requireDeviceId } from '../middleware/deviceId';
 import { getScoresCollection, ScoreDocument } from '../db/mongo';
 import { InterestScore } from '../types';
 
+import { streamScoresToPowerBI } from '../services/powerbi';
+
 const router = Router();
 
 router.get('/', requireDeviceId, async (req, res) => {
@@ -42,6 +44,9 @@ router.post('/', requireDeviceId, async (req, res) => {
 
     if (operations.length > 0) {
       await collection.bulkWrite(operations);
+      
+      // stream to Power BI (V5) — fire and forget
+      streamScoresToPowerBI(deviceId, scores as ScoreDocument[]).catch(() => {});
     }
 
     res.json({ success: true, updated: operations.length });

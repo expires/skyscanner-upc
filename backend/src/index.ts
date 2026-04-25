@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import path from 'path';
 import { connectMongo } from './db/mongo';
 
 import detectRouter from './routes/detect';
@@ -17,6 +18,9 @@ const app = express();
 
 app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: '10mb' })); // Increased limit for screenshots
+
+// Serve static API documentation website
+app.use(express.static(path.join(__dirname, '../public')));
 
 app.use('/detect', detectRouter);
 app.use('/flights', flightsRouter);

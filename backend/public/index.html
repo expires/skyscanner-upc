@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Roam API Documentation</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0d1117;
+            --surface-color: #161b22;
+            --text-primary: #c9d1d9;
+            --text-secondary: #8b949e;
+            --accent-color: #58a6ff;
+            --border-color: #30363d;
+            --success-color: #2ea043;
+            --warning-color: #d29922;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            line-height: 1.6;
+            margin: 0;
+            padding: 0;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 50px;
+        }
+
+        h1 {
+            font-size: 3rem;
+            margin-bottom: 10px;
+            background: -webkit-linear-gradient(45deg, var(--accent-color), #bc8cf2);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        header p {
+            color: var(--text-secondary);
+            font-size: 1.2rem;
+        }
+
+        .endpoint {
+            background-color: var(--surface-color);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 24px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .endpoint:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 32px rgba(0,0,0,0.4);
+        }
+
+        .endpoint-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 16px;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 12px;
+        }
+
+        .method {
+            background-color: var(--success-color);
+            color: white;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-weight: 600;
+            font-size: 0.9rem;
+            margin-right: 16px;
+        }
+
+        .method.get {
+            background-color: var(--accent-color);
+        }
+
+        .path {
+            font-size: 1.4rem;
+            font-weight: 700;
+            font-family: monospace;
+            color: #fff;
+        }
+
+        .description {
+            color: var(--text-secondary);
+            margin-bottom: 20px;
+        }
+
+        .section-title {
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-secondary);
+            margin: 16px 0 8px 0;
+            font-weight: 600;
+        }
+
+        pre {
+            background-color: #090c10;
+            padding: 16px;
+            border-radius: 8px;
+            overflow-x: auto;
+            border: 1px solid var(--border-color);
+            font-family: monospace;
+            font-size: 0.9rem;
+            color: #e6edf3;
+            margin: 0;
+        }
+
+        code {
+            font-family: monospace;
+            color: #ff7b72;
+        }
+
+        .tag {
+            display: inline-block;
+            background: rgba(88, 166, 255, 0.1);
+            color: var(--accent-color);
+            border: 1px solid rgba(88, 166, 255, 0.2);
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            margin-right: 8px;
+        }
+
+        .footer {
+            text-align: center;
+            margin-top: 60px;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Roam API</h1>
+            <p>Secure proxy and telemetry service for the Roam Extension</p>
+        </header>
+
+        <div class="endpoint">
+            <div class="endpoint-header">
+                <span class="method">POST</span>
+                <span class="path">/detect</span>
+            </div>
+            <p class="description">Proxies detection payload (text + screenshot) to the Gemini API to identify travel destinations.</p>
+            <div class="section-title">Headers</div>
+            <pre>x-device-id: string (Required)</pre>
+            <div class="section-title">Request Body</div>
+            <pre>{
+  "text": "string",
+  "screenshot": "string (optional)",
+  "postId": "string",
+  "platform": "instagram | tiktok"
+}</pre>
+            <div class="section-title">Response</div>
+            <pre>{
+  "isTravel": true,
+  "destinations": [...]
+}</pre>
+        </div>
+
+        <div class="endpoint">
+            <div class="endpoint-header">
+                <span class="method">POST</span>
+                <span class="path">/flights</span>
+            </div>
+            <p class="description">Proxies live flight searches to Skyscanner and polls for completion.</p>
+            <div class="section-title">Headers</div>
+            <pre>x-device-id: string (Required)</pre>
+            <div class="section-title">Request Body</div>
+            <pre>{
+  "iataCode": "string",
+  "homeAirport": "string",
+  "currency": "string",
+  "maxPolls": "number"
+}</pre>
+            <div class="section-title">Response</div>
+            <pre>{
+  "price": 199,
+  "currency": "EUR",
+  "airline": "Ryanair",
+  ...
+}</pre>
+        </div>
+
+        <div class="endpoint">
+            <div class="endpoint-header">
+                <span class="method">POST</span>
+                <span class="path">/events</span>
+            </div>
+            <p class="description">Saves engagement events to MongoDB and streams them to Power BI (V5 feature).</p>
+            <div class="section-title">Headers</div>
+            <pre>x-device-id: string (Required)</pre>
+            <div class="section-title">Request Body</div>
+            <pre>{
+  "events": [
+    {
+      "eventType": "dwell",
+      "destination": "Paris",
+      "duration": 5000,
+      ...
+    }
+  ]
+}</pre>
+            <div class="section-title">Response</div>
+            <pre>{
+  "success": true,
+  "inserted": 1
+}</pre>
+        </div>
+
+        <div class="endpoint">
+            <div class="endpoint-header">
+                <span class="method">POST</span>
+                <span class="path">/scores</span>
+            </div>
+            <p class="description">Upserts recalculated intent scores to MongoDB and streams them to Power BI.</p>
+            <div class="section-title">Headers</div>
+            <pre>x-device-id: string (Required)</pre>
+            <div class="section-title">Request Body</div>
+            <pre>{
+  "scores": [
+    {
+      "destination": "Paris",
+      "score": 85,
+      ...
+    }
+  ]
+}</pre>
+            <div class="section-title">Response</div>
+            <pre>{
+  "success": true,
+  "updated": 1
+}</pre>
+        </div>
+
+        <div class="endpoint">
+            <div class="endpoint-header">
+                <span class="method get">GET</span>
+                <span class="path">/scores</span>
+            </div>
+            <p class="description">Retrieves a device's saved intent scores for cross-device synchronization.</p>
+            <div class="section-title">Headers</div>
+            <pre>x-device-id: string (Required)</pre>
+            <div class="section-title">Response</div>
+            <pre>{
+  "scores": [...],
+  "lastUpdated": 1713398400000
+}</pre>
+        </div>
+
+        <div class="endpoint">
+            <div class="endpoint-header">
+                <span class="method">POST</span>
+                <span class="path">/summary</span>
+            </div>
+            <p class="description">Requests a natural language intent summary from Gemini for the Intent Tab narrative.</p>
+            <div class="section-title">Headers</div>
+            <pre>x-device-id: string (Required)</pre>
+            <div class="section-title">Request Body</div>
+            <pre>{
+  "prompt": "string",
+  "maxTokens": "number (optional)",
+  "temperature": "number (optional)"
+}</pre>
+        </div>
+
+        <div class="footer">
+            Built for Roam — Travel Inspiration Telemetry
+        </div>
+    </div>
+</body>
+</html>
