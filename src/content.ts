@@ -6,6 +6,8 @@ interface ContentPayload {
   hashtags: string[];
   locationTag: string | null;
   pageUrl: string;
+  postId: string;
+  slideIndex: number;
   trigger: "text_change" | "slide_change" | "video_tick";
 }
 
@@ -66,6 +68,8 @@ function extractTikTok(): ContentPayload | null {
     hashtags,
     locationTag,
     pageUrl: location.href,
+    postId: currentPostId,
+    slideIndex: getCurrentSlideIndex(),
     trigger: "text_change",
   };
 }
@@ -97,6 +101,8 @@ function extractInstagram(): ContentPayload | null {
     hashtags,
     locationTag,
     pageUrl: location.href,
+    postId: currentPostId,
+    slideIndex: getCurrentSlideIndex(),
     trigger: "text_change",
   };
 }
@@ -265,18 +271,36 @@ document.addEventListener("click", (e) => {
   const target = e.target as HTMLElement;
 
   // Detect clicks on slideshow arrows / navigation buttons
+  // Find the nearest parent button first (clicks land on <path>/<svg> inside buttons)
+  const parentBtn = target.closest("button");
+
   const isNavClick =
+    // Generic aria-label patterns on buttons
     target.closest("button[aria-label*='next' i]") ??
     target.closest("button[aria-label*='previous' i]") ??
     target.closest("button[aria-label*='Go to slide' i]") ??
+    target.closest("button[aria-label*='Go Back' i]") ??
+    target.closest("button[aria-label*='Next' i]") ??
+    // Instagram: the aria-label is on the SVG inside the button, not the button itself
+    (parentBtn?.querySelector('svg[aria-label="Next"], svg[aria-label="Go Back"]') ? parentBtn : null) ??
+    // Instagram: chevron buttons inside carousel posts
+    target.closest("article button[aria-label]") ??
+    // TikTok selectors
     target.closest('[class*="Arrow"]') ??
     target.closest('[class*="SlideNav"]') ??
     target.closest('[class*="carousel" i] button') ??
     target.closest('[data-e2e*="arrow"]');
 
   if (isNavClick) {
-    // Wait a moment for the slide to animate
-    setTimeout(() => handleSlideChange(), 300);
+    // Wait for the slide to animate, then send a one-off slide_change
+    // Don't reset lastSentKey — that would cause video ticks to re-spam
+    setTimeout(() => {
+      const payload = extractContent();
+      if (!payload) return;
+      payload.trigger = "slide_change";
+      console.log("[Roam] Carousel nav click detected");
+      sendPayload(payload);
+    }, 500);
   }
 }, true);
 

@@ -92,7 +92,7 @@ async function detectTravel(
     },
     body: JSON.stringify({
       model: CLAUDE_MODEL,
-      max_tokens: 512,
+      max_tokens: 1024,
       messages: [{ role: "user", content }],
     }),
   });
@@ -109,7 +109,23 @@ async function detectTravel(
     .replace(/\s*```$/, "")
     .trim();
 
-  return JSON.parse(responseText) as DetectionResult;
+  try {
+    return JSON.parse(responseText) as DetectionResult;
+  } catch {
+    // Response may be truncated — try to salvage by closing open arrays/objects
+    console.warn("[Roam BG] JSON parse failed, attempting repair");
+    // Find the last complete destination object by finding the last "},"
+    const lastComplete = responseText.lastIndexOf("},");
+    if (lastComplete > 0) {
+      const repaired = responseText.slice(0, lastComplete + 1) + "]}";
+      try {
+        return JSON.parse(repaired) as DetectionResult;
+      } catch {
+        // Give up
+      }
+    }
+    return { isTravel: false, destinations: [] };
+  }
 }
 
 // --- Skyscanner ---
@@ -392,18 +408,19 @@ async function processDestination(
   }
 }
 
-// --- Main queue ---
+// --- Parallel processing indexed by postId:slideIndex ---
 
-interface QueuedRequest {
-  message: ContentPayload;
-  windowId: number | undefined;
+// Tracks which post+slide combos have been processed or are in-flight
+const processedSlides = new Set<string>();
+
+function slideKey(postId: string, slideIndex: number): string {
+  return `${postId}:${slideIndex}`;
 }
 
-let isProcessing = false;
-let pendingRequest: QueuedRequest | null = null;
+// Clear stale loading state on startup
+chrome.storage.local.set({ loadingDestinations: [] });
 
-async function processRequest(req: QueuedRequest): Promise<void> {
-  const { message, windowId } = req;
+async function processRequest(message: ContentPayload, windowId: number | undefined): Promise<void> {
   try {
     const settings = await getSettings();
     if (!settings.ANTHROPIC_API_KEY) {
@@ -421,7 +438,7 @@ async function processRequest(req: QueuedRequest): Promise<void> {
       .filter(Boolean)
       .join(" ");
 
-    console.log(`[Roam BG] Processing (${message.trigger}):`, fullText.slice(0, 60), screenshot ? "+ img" : "");
+    console.log(`[Roam BG] Processing (${message.trigger}, slide ${message.slideIndex}):`, fullText.slice(0, 60), screenshot ? "+ img" : "");
     const detection = await detectTravel(fullText, screenshot, settings.ANTHROPIC_API_KEY);
 
     if (!detection.isTravel || detection.destinations.length === 0) {
@@ -457,29 +474,24 @@ async function processRequest(req: QueuedRequest): Promise<void> {
   }
 }
 
-async function drainQueue(): Promise<void> {
-  if (isProcessing) return;
-  isProcessing = true;
-
-  while (pendingRequest) {
-    const req = pendingRequest;
-    pendingRequest = null;
-    await processRequest(req);
-  }
-
-  isProcessing = false;
-}
-
 // --- Message listener ---
 
 chrome.runtime.onMessage.addListener(
   (message: ContentPayload, sender, _sendResponse) => {
     if (message.type !== "CONTENT_DETECTED") return;
 
-    console.log(`[Roam BG] Queued (${message.trigger}):`, message.description?.slice(0, 50));
+    const key = slideKey(message.postId, message.slideIndex);
 
-    pendingRequest = { message, windowId: sender.tab?.windowId };
-    drainQueue();
+    // Skip if this exact post+slide is already processed or in-flight
+    if (processedSlides.has(key)) {
+      return;
+    }
+    processedSlides.add(key);
+
+    console.log(`[Roam BG] Firing (${message.trigger}, ${key}):`, message.description?.slice(0, 50));
+
+    // Fire immediately — runs in parallel with any other in-flight requests
+    processRequest(message, sender.tab?.windowId);
     return true;
   }
 );

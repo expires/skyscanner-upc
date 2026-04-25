@@ -50,6 +50,8 @@ export interface ContentPayload {
   hashtags: string[];
   locationTag: string | null;
   pageUrl: string;
+  postId: string;
+  slideIndex: number;
   trigger: "text_change" | "slide_change" | "video_tick";
 }
 
