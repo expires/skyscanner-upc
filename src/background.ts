@@ -519,6 +519,11 @@ async function processRequest(message: ContentPayload, windowId: number | undefi
       seen.add(key);
       return true;
     });
+    // If more than 5 destinations from a single slide, it's likely a list/compilation post — skip
+    if (hits.length > 5) {
+      console.log(`[Roam BG] Skipping — too many destinations (${hits.length}), likely a list post`);
+      return;
+    }
     console.log(`[Roam BG] Detected ${hits.length} destination(s):`, hits.map((h) => h.destination).join(", "));
 
     // Register post+slide → destination mapping for engagement tracking
