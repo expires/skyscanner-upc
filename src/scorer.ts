@@ -122,6 +122,7 @@ export function computeScores(
       rawScore: raw,
       breakdown: buildBreakdown(events),
       flight: existing?.flight ?? null,
+      mergedLocations: existing?.mergedLocations ?? [],
       lastUpdated: Date.now(),
     });
   }

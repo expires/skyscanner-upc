@@ -50,6 +50,16 @@ const inputGemini = $<HTMLInputElement>("input-gemini");
 const inputSkyscanner = $<HTMLInputElement>("input-skyscanner");
 const inputAirport = $<HTMLInputElement>("input-airport");
 
+// --- Narrator ---
+const narratorCard = $<HTMLDivElement>("narrator-card");
+const narratorText = $<HTMLDivElement>("narrator-text");
+const narratorError = $<HTMLDivElement>("narrator-error");
+const narratorRefresh = $<HTMLButtonElement>("narrator-refresh");
+const narratorGenerateWrap = $<HTMLDivElement>("narrator-generate-wrap");
+const narratorGenerateBtn = $<HTMLButtonElement>("narrator-generate-btn");
+
+let cachedNarrative: string | null = null;
+
 // --- State ---
 let activeTagFilter: string | null = null;
 let allDetections: DetectedEntry[] = [];
@@ -192,10 +202,18 @@ function renderFeedItem(
     ? `<span class="feed-score-badge">${score}</span>`
     : "";
 
+  const mergedBadge = entry.mergedLocations && entry.mergedLocations.length > 1
+    ? `<span class="merged-badge">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:2px"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+        ${entry.mergedLocations.length} locations
+        <span class="merged-tooltip">${entry.mergedLocations.join("<br/>")}</span>
+      </span>`
+    : "";
+
   item.innerHTML = `
     <span class="feed-flag">${countryFlag(entry.countryCode)}</span>
     <div class="feed-info">
-      <div class="feed-dest">${entry.destination}${scoreBadge}</div>
+      <div class="feed-dest">${entry.destination}${scoreBadge}${mergedBadge}</div>
       <div class="feed-meta">
         ${entry.country}
         <a href="${entry.sourceUrl}" target="_blank" class="source-link">${sourceIcon(entry.sourceUrl)}</a>
@@ -416,7 +434,141 @@ infoModal.addEventListener("click", (e) => {
 
 rankedReset.addEventListener("click", async () => {
   await chrome.storage.local.set({ engagementLog: [], interestScores: [] });
+  cachedNarrative = null;
+  narratorCard.style.display = "none";
+  narratorGenerateWrap.style.display = "none";
   renderRanked();
+});
+
+// --- AI Narrator ---
+
+async function generateNarrative(scores: InterestScore[], force = false): Promise<void> {
+  if (!force && cachedNarrative) return;
+
+  const { GEMINI_API_KEY } = await chrome.storage.sync.get("GEMINI_API_KEY") as { GEMINI_API_KEY?: string };
+  if (!GEMINI_API_KEY) {
+    showNarratorError("Add your Gemini API key in Settings to enable AI insights.");
+    return;
+  }
+
+  if (scores.length === 0) return;
+
+  // Build prompt
+  const destLines = scores
+    .slice(0, 6)
+    .map((s) => {
+      const dwell = s.breakdown.totalDwell > 0
+        ? `${Math.round(s.breakdown.totalDwell / 1000)}s dwell`
+        : null;
+      const posts = s.breakdown.postCount > 0
+        ? `${s.breakdown.postCount} post${s.breakdown.postCount > 1 ? "s" : ""}`
+        : null;
+      const extras: string[] = [];
+      if (s.breakdown.rewatches > 0) extras.push(`${s.breakdown.rewatches} rewatch${s.breakdown.rewatches > 1 ? "es" : ""}`);
+      if ((s.breakdown as any).likes > 0) extras.push(`${(s.breakdown as any).likes} like${(s.breakdown as any).likes > 1 ? "s" : ""}`);
+      if (s.breakdown.soundOns > 0) extras.push("sound on");
+      const parts = [dwell, posts, ...extras].filter(Boolean).join(", ");
+      return `${s.destination} (score ${s.score}/100${parts ? ": " + parts : ""})`;
+    })
+    .join("\n");
+
+  const flightHint = (() => {
+    const top = scores[0];
+    if (top?.flight) {
+      return `\nTop match flight: ${top.destination} at ${top.flight.price} ${top.flight.currency}.`;
+    }
+    return "";
+  })();
+
+  const prompt = `You are a travel insight narrator for a browser extension called Roam. Based on this user's engagement data from scrolling TikTok and Instagram, write 2–3 sentences summarising their travel intent. Be specific, warm, and insightful. No bullet points. No "Based on your data". Just speak naturally, like a friend who noticed what they've been watching — concise enough to fit a small popup card.${flightHint}
+
+Top destinations by interest score:
+${destLines}`;
+
+  // UI: loading state
+  setNarratorLoading(true);
+  narratorCard.style.display = "block";
+  narratorGenerateWrap.style.display = "none";
+  
+  // Show skeleton loader
+  narratorText.innerHTML = `
+    <div class="skeleton skeleton-line"></div>
+    <div class="skeleton skeleton-line"></div>
+    <div class="skeleton skeleton-line-last"></div>
+  `;
+  narratorText.classList.add("loading");
+  narratorError.style.display = "none";
+
+  try {
+    const GEMINI_MODEL = "gemma-3-27b-it";
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { maxOutputTokens: 256, temperature: 1.0 },
+      }),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`Gemini ${res.status}: ${errText.slice(0, 120)}`);
+    }
+
+    const data = await res.json();
+    const raw: string = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+
+    if (!raw.trim()) throw new Error("Empty response from Gemini.");
+
+    // Clean up any markdown the model may include
+    const cleaned = raw
+      .replace(/^#+\s*/gm, "")
+      .replace(/\*\*(.*?)\*\*/g, "$1")
+      .replace(/\*(.*?)\*/g, "$1")
+      .trim();
+
+    cachedNarrative = cleaned;
+    narratorText.textContent = cleaned;
+    narratorText.classList.remove("loading");
+  } catch (err: any) {
+    narratorText.textContent = "";
+    narratorText.classList.remove("loading");
+    showNarratorError(err?.message ?? "Something went wrong. Try again.");
+  } finally {
+    setNarratorLoading(false);
+  }
+}
+
+function setNarratorLoading(on: boolean): void {
+  narratorRefresh.disabled = on;
+  narratorGenerateBtn.disabled = on;
+  if (on) {
+    narratorRefresh.classList.add("spinning");
+    narratorGenerateBtn.classList.add("spinning");
+  } else {
+    narratorRefresh.classList.remove("spinning");
+    narratorGenerateBtn.classList.remove("spinning");
+  }
+}
+
+function showNarratorError(msg: string): void {
+  narratorError.textContent = msg;
+  narratorError.style.display = "block";
+  // Show the card so the error is visible
+  narratorCard.style.display = "block";
+  narratorGenerateWrap.style.display = "none";
+}
+
+narratorRefresh.addEventListener("click", async () => {
+  const { interestScores = [] } = await chrome.storage.local.get("interestScores") as { interestScores: InterestScore[] };
+  if (interestScores.length > 0) generateNarrative(interestScores, true);
+});
+
+narratorGenerateBtn.addEventListener("click", async () => {
+  const { interestScores = [] } = await chrome.storage.local.get("interestScores") as { interestScores: InterestScore[] };
+  if (interestScores.length > 0) generateNarrative(interestScores, true);
 });
 
 // --- Ranked ---
@@ -429,19 +581,49 @@ function formatDwell(ms: number): string {
 }
 
 async function renderRanked(): Promise<void> {
-  const { interestScores = [] } = await chrome.storage.local.get("interestScores") as { interestScores: InterestScore[] };
+  const { interestScores = [], detections = [] } = await chrome.storage.local.get(["interestScores", "detections"]) as { interestScores: InterestScore[], detections: DetectedEntry[] };
 
-  if (interestScores.length === 0) {
+  // Live-merge latest flight and location data from detections
+  // because engagement events often happen before flight searches finish
+  const validScores: InterestScore[] = [];
+  for (const score of interestScores) {
+    const match = detections.find((d) =>
+      d.destination.toLowerCase() === score.destination.toLowerCase() ||
+      (d.airportCode && d.airportCode === score.airportCode)
+    );
+    if (match) {
+      if (!score.country) score.country = match.country;
+      if (!score.airportCode) score.airportCode = match.airportCode;
+      if (match.flight) score.flight = match.flight;
+      if (match.mergedLocations) score.mergedLocations = match.mergedLocations;
+      validScores.push(score);
+    }
+  }
+
+  if (validScores.length === 0) {
     rankedEmpty.style.display = "block";
     rankedList.style.display = "none";
+    narratorCard.style.display = "none";
+    narratorGenerateWrap.style.display = "none";
     return;
   }
 
   rankedEmpty.style.display = "none";
   rankedList.style.display = "block";
+
+  // Show narrator card if we already have a narrative, otherwise show the generate button
+  if (cachedNarrative) {
+    narratorCard.style.display = "block";
+    narratorText.textContent = cachedNarrative;
+    narratorText.classList.remove("loading");
+    narratorGenerateWrap.style.display = "none";
+  } else {
+    narratorCard.style.display = "none";
+    narratorGenerateWrap.style.display = "block";
+  }
   rankedList.innerHTML = "";
 
-  interestScores.forEach((entry) => {
+  validScores.forEach((entry) => {
     const item = document.createElement("div");
     item.className = "ranked-item";
 
@@ -478,27 +660,28 @@ async function renderRanked(): Promise<void> {
       </div>`
     ).join("");
 
-    // Flight row — sits between destination name and score bar
-    let flightHtml = "";
-    if (entry.flight) {
-      const dur = entry.flight.durationMinutes ? formatDuration(entry.flight.durationMinutes) : "";
-      const flightDetail = [entry.flight.airline, dur].filter(Boolean).join(" · ");
-      flightHtml = `
-        <div class="ranked-flight-inline">
-          <span class="ranked-flight-info">${flightDetail}</span>
-          <a class="ranked-flight-link" href="${entry.flight.deeplink}" target="_blank">
-            <span class="ranked-flight-price">${entry.flight.price} ${entry.flight.currency}</span>
-            <span class="ranked-flight-arrow">&nearr;</span>
-          </a>
-        </div>`;
-    }
+    const mergedBadge = entry.mergedLocations && entry.mergedLocations.length > 1
+      ? `<span class="merged-badge">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:2px"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+          ${entry.mergedLocations.length} locations
+          <span class="merged-tooltip">${entry.mergedLocations.join("<br/>")}</span>
+        </span>`
+      : "";
+
+    const priceHtml = entry.flight
+      ? `<a class="feed-price-link" href="${entry.flight.deeplink}" target="_blank">
+           <span class="feed-price">${entry.flight.price}</span>
+           <span class="feed-currency">${entry.flight.currency}</span>
+           <span class="feed-arrow">&nearr;</span>
+         </a>`
+      : "";
 
     item.innerHTML = `
       <div class="ranked-top">
         <span class="ranked-flag">${countryFlag(entry.countryCode)}</span>
         <div class="ranked-info">
-          <div class="ranked-dest">${entry.destination}</div>
-          ${flightHtml}
+          <div class="ranked-dest">${entry.destination}${mergedBadge}</div>
+          <div class="feed-meta" style="margin-bottom: 4px;">${entry.country}</div>
           <div class="ranked-bar-row">
             <div class="ranked-bar-track">
               <div class="ranked-bar-fill" style="width: ${entry.score}%"></div>
@@ -506,6 +689,11 @@ async function renderRanked(): Promise<void> {
             <span class="ranked-score">${entry.score}</span>
           </div>
           <div class="ranked-bar-label">Intent score</div>
+        </div>
+        <div class="feed-right" style="margin-top: 0">
+          <div class="feed-price-row">
+            ${priceHtml}
+          </div>
         </div>
       </div>
       <button class="ranked-breakdown-toggle">

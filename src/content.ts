@@ -15,6 +15,7 @@ interface ContentPayload {
 const TEXT_DEBOUNCE_MS = 800;
 const VIDEO_TICK_MS = 1000;
 const SLIDE_DEBOUNCE_MS = 400;
+const AFK_THRESHOLD_MS = 20_000; // dwell idle tail stripped after 20s of no input
 
 // --- State ---
 let textDebounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -27,6 +28,19 @@ let postFinished = false; // true once the video has ended for this post
 let currentVideo: HTMLVideoElement | null = null;
 let localSlideCounter = 0; // incremented on each carousel nav click
 
+// --- AFK tracking ---
+let lastActivityTime = Date.now();
+
+function refreshActivity(): void {
+  lastActivityTime = Date.now();
+}
+
+// Any of these events count as "active" — mouse, touch, keyboard, or scroll
+document.addEventListener("mousemove", refreshActivity, { passive: true, capture: true });
+document.addEventListener("touchstart", refreshActivity, { passive: true, capture: true });
+document.addEventListener("keydown", refreshActivity, { passive: true, capture: true });
+document.addEventListener("scroll", refreshActivity, { passive: true, capture: true });
+
 function isTikTok(): boolean {
   return location.hostname.includes("tiktok.com");
 }
@@ -37,7 +51,7 @@ function isInstagram(): boolean {
 
 // --- Text Extraction ---
 
-function extractTikTok(): ContentPayload | null {
+function extractTikTok(): ContentPayload {
   const descEl =
     document.querySelector('[data-e2e="browse-video-desc"]') ??
     document.querySelector('[data-e2e="video-desc"]') ??
@@ -45,12 +59,10 @@ function extractTikTok(): ContentPayload | null {
     document.querySelector('[class*="tiktok-"][class*="DivContainer"] > span');
 
   const fallbackDesc = descEl ?? document.querySelector('[class*="desc"][class*="video" i]');
-  if (!fallbackDesc) return null;
-
-  const description = fallbackDesc.textContent?.trim() ?? "";
+  const description = fallbackDesc?.textContent?.trim() ?? "";
 
   const hashtagEls =
-    fallbackDesc.querySelectorAll("a[href*='/tag/']").length > 0
+    fallbackDesc && fallbackDesc.querySelectorAll("a[href*='/tag/']").length > 0
       ? fallbackDesc.querySelectorAll("a[href*='/tag/']")
       : document.querySelectorAll("a[href*='/tag/']");
   const hashtags = Array.from(hashtagEls).map((el) => el.textContent?.trim() ?? "");
@@ -61,8 +73,6 @@ function extractTikTok(): ContentPayload | null {
     document.querySelector('a[href*="/location/"]');
   const locationTag = locationEl?.textContent?.trim() ?? null;
 
-  if (!description && hashtags.length === 0) return null;
-
   return {
     type: "CONTENT_DETECTED",
     description,
@@ -75,7 +85,7 @@ function extractTikTok(): ContentPayload | null {
   };
 }
 
-function extractInstagram(): ContentPayload | null {
+function extractInstagram(): ContentPayload {
   const captionEl =
     document.querySelector("h1._ap3a") ??
     document.querySelector('[class*="Caption"] span') ??
@@ -83,9 +93,7 @@ function extractInstagram(): ContentPayload | null {
     document.querySelector("article span[dir='auto']") ??
     document.querySelector("ul li span[dir='auto']");
 
-  if (!captionEl) return null;
-
-  const description = captionEl.textContent?.trim() ?? "";
+  const description = captionEl?.textContent?.trim() ?? "";
   const hashtagMatches = description.match(/#\w+/g) ?? [];
   const hashtags = hashtagMatches.map((h) => h);
 
@@ -94,8 +102,6 @@ function extractInstagram(): ContentPayload | null {
     document.querySelector("a[href*='/locations/']");
   const locationTag = locationEl?.textContent?.trim() ?? null;
 
-  if (!description) return null;
-
   return {
     type: "CONTENT_DETECTED",
     description,
@@ -108,17 +114,30 @@ function extractInstagram(): ContentPayload | null {
   };
 }
 
-function extractContent(): ContentPayload | null {
+function extractContent(): ContentPayload {
+  // Always returns a payload — text fields may be empty if not found.
+  // Screenshot is the primary detection signal; text is supplementary context.
   if (isTikTok()) return extractTikTok();
   if (isInstagram()) return extractInstagram();
-  return null;
+  // Fallback: empty payload so screenshot can still be taken
+  return {
+    type: "CONTENT_DETECTED",
+    description: "",
+    hashtags: [],
+    locationTag: null,
+    pageUrl: location.href,
+    postId: currentPostId,
+    slideIndex: getCurrentSlideIndex(),
+    trigger: "text_change",
+  };
 }
 
 // --- Send to background ---
 
 function sendPayload(payload: ContentPayload): void {
   if (postFinished) return;
-  console.log(`[Roam] Sending (${payload.trigger}):`, payload.description.slice(0, 50));
+  const textPreview = payload.description?.slice(0, 50) || "(no caption)";
+  console.log(`[Roam] Sending (${payload.trigger}): ${textPreview}`);
   chrome.runtime.sendMessage(payload);
 }
 
@@ -200,15 +219,15 @@ function handlePostChange(): void {
 
 function handleTextChange(): void {
   const payload = extractContent();
-  if (!payload) return;
-
+  // Always send on post change — screenshot is the primary signal.
+  // Use the text as a dedup key only when no screenshot will be taken
+  // (slideIndex > 0 with no screenshot is handled in background.ts).
   const textKey = payload.description + payload.hashtags.join(",");
 
   if (textDebounceTimer) clearTimeout(textDebounceTimer);
 
   textDebounceTimer = setTimeout(() => {
-    // Always send on new post even if same text (screenshot will differ)
-    if (textKey === lastSentKey && payload.trigger === "text_change") return;
+    if (textKey === lastSentKey && payload.trigger === "text_change" && payload.slideIndex > 0) return;
     lastSentKey = textKey;
     sendPayload(payload);
   }, TEXT_DEBOUNCE_MS);
@@ -252,7 +271,6 @@ function handleSlideChange(): void {
 
   slideDebounceTimer = setTimeout(() => {
     const payload = extractContent();
-    if (!payload) return;
     payload.trigger = "slide_change";
     console.log("[Roam] Slide changed to index:", slideIdx);
     sendPayload(payload);
@@ -266,7 +284,6 @@ function startVideoTickIfNeeded(): void {
 
   videoTickInterval = setInterval(() => {
     const payload = extractContent();
-    if (!payload) return;
     payload.trigger = "video_tick";
     sendPayload(payload);
   }, VIDEO_TICK_MS);
@@ -318,7 +335,6 @@ document.addEventListener("click", (e) => {
       if (currentPostId) engagement.startDwell(currentPostId);
 
       const payload = extractContent();
-      if (!payload) return;
       payload.trigger = "slide_change";
       console.log(`[Roam] Carousel nav → slide ${localSlideCounter}`);
       sendPayload(payload);
@@ -370,18 +386,31 @@ const engagement = {
 
   flushDwell(): void {
     if (this.dwellStart && this.trackedPostId) {
-      const duration = Date.now() - this.dwellStart;
-      if (duration > 1500) {
+      const rawDuration = Date.now() - this.dwellStart;
+
+      // AFK check: if user has been inactive for > AFK_THRESHOLD_MS, strip the
+      // idle tail. Effective dwell = time from start until they last moved.
+      const idleMs = Date.now() - lastActivityTime;
+      const effectiveDuration = idleMs > AFK_THRESHOLD_MS
+        ? Math.max(0, lastActivityTime - this.dwellStart)
+        : rawDuration;
+
+      if (effectiveDuration > 1500) {
         sendEngagement({
           type: "ENGAGEMENT_EVENT",
           eventType: "dwell",
-          duration,
+          duration: effectiveDuration,
           postId: this.trackedPostId,
           slideIndex: this.trackedSlideIndex,
           platform: getPlatform(),
           timestamp: Date.now(),
         });
-        console.log(`[Roam] Dwell: ${Math.round(duration / 1000)}s on ${this.trackedPostId.slice(0, 20)}:${this.trackedSlideIndex}`);
+        const tag = idleMs > AFK_THRESHOLD_MS
+          ? `${Math.round(effectiveDuration / 1000)}s active (AFK-trimmed from ${Math.round(rawDuration / 1000)}s)`
+          : `${Math.round(effectiveDuration / 1000)}s`;
+        console.log(`[Roam] Dwell: ${tag} on ${this.trackedPostId.slice(0, 20)}:${this.trackedSlideIndex}`);
+      } else if (idleMs > AFK_THRESHOLD_MS) {
+        console.log(`[Roam] Dwell discarded — AFK for ${Math.round(idleMs / 1000)}s, active time < 1.5s`);
       }
       this.dwellStart = 0;
     }

@@ -544,14 +544,15 @@
 
     .ranked-top {
       display: flex;
-      align-items: center;
-      gap: 10px;
+      align-items: flex-start;
+      gap: 12px;
     }
 
     .ranked-flag {
-      font-size: 26px;
+      font-size: 28px;
       line-height: 1;
       flex-shrink: 0;
+      margin-top: 1px;
     }
 
     .ranked-info { flex: 1; min-width: 0; }
@@ -829,6 +830,235 @@
       margin-left: 6px;
       vertical-align: middle;
     }
+
+    /* Merged locations badge + tooltip */
+    .merged-badge {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      background: #EFF3F8;
+      color: #626971;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 1px 7px 1px 6px;
+      border-radius: 6px;
+      margin-left: 6px;
+      vertical-align: middle;
+      cursor: default;
+      white-space: nowrap;
+    }
+
+    .merged-badge-dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: #9aa0a8;
+      flex-shrink: 0;
+    }
+
+    .merged-tooltip {
+      display: none;
+      position: absolute;
+      top: calc(100% + 5px);
+      left: 0;
+      background: #05203C;
+      color: rgba(255,255,255,0.9);
+      font-size: 11px;
+      font-weight: 400;
+      font-style: normal;
+      padding: 8px 12px;
+      border-radius: 10px;
+      white-space: nowrap;
+      z-index: 50;
+      box-shadow: 0 6px 20px rgba(5,32,60,0.3);
+      line-height: 1.85;
+      pointer-events: none;
+    }
+
+    .merged-tooltip::before {
+      content: '';
+      position: absolute;
+      top: -4px;
+      left: 10px;
+      width: 8px;
+      height: 8px;
+      background: #05203C;
+      transform: rotate(45deg);
+      border-radius: 1px;
+    }
+
+    .merged-badge:hover .merged-tooltip {
+      display: block;
+    }
+
+    /* AI Narrator card */
+    .narrator-card {
+      margin: 8px 8px 4px;
+      background: linear-gradient(135deg, #05203C 0%, #0a3460 100%);
+      border-radius: 12px;
+      padding: 12px 14px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .narrator-card::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse at top right, rgba(0,98,227,0.25) 0%, transparent 65%);
+      pointer-events: none;
+    }
+
+    .narrator-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+
+    .narrator-label {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 10px;
+      font-weight: 700;
+      color: rgba(255,255,255,0.5);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .narrator-sparkle {
+      font-size: 12px;
+      background: linear-gradient(135deg, #60a5fa, #a78bfa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .narrator-refresh {
+      background: rgba(255,255,255,0.1);
+      border: 1px solid rgba(255,255,255,0.15);
+      color: rgba(255,255,255,0.6);
+      font-size: 10px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-family: inherit;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .narrator-refresh:hover {
+      background: rgba(255,255,255,0.18);
+      color: #fff;
+      border-color: rgba(255,255,255,0.3);
+    }
+
+    .narrator-refresh:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    .narrator-refresh svg {
+      transition: transform 0.6s;
+    }
+
+    .narrator-refresh.spinning svg {
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+
+    .narrator-text {
+      font-size: 13px;
+      font-style: italic;
+      color: rgba(255,255,255,0.88);
+      line-height: 1.6;
+      letter-spacing: 0.01em;
+      min-height: 40px;
+    }
+
+    .narrator-text.loading {
+      color: rgba(255,255,255,0.4);
+    }
+
+    .narrator-generate-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      width: 100%;
+      padding: 10px 12px;
+      background: #0062E3;
+      border: 1px solid #0054c2;
+      border-radius: 8px;
+      color: #fff;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      font-family: inherit;
+      transition: all 0.2s;
+      margin-top: 2px;
+      box-shadow: 0 4px 12px rgba(0, 98, 227, 0.3);
+    }
+
+    .narrator-generate-btn:hover {
+      background: #0054c2;
+      transform: translateY(-1px);
+      box-shadow: 0 6px 16px rgba(0, 98, 227, 0.4);
+    }
+
+    .narrator-generate-btn:active {
+      transform: translateY(0);
+    }
+
+    .narrator-generate-btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+
+    .narrator-generate-btn.spinning svg {
+      animation: spin 1s linear infinite;
+    }
+
+    /* Skeleton loader */
+    .skeleton {
+      background: linear-gradient(
+        90deg,
+        rgba(255, 255, 255, 0.05) 25%,
+        rgba(255, 255, 255, 0.12) 50%,
+        rgba(255, 255, 255, 0.05) 75%
+      );
+      background-size: 200% 100%;
+      animation: skeleton-loading 1.5s infinite;
+      border-radius: 4px;
+      height: 14px;
+      margin-bottom: 8px;
+    }
+
+    .skeleton-line { width: 100%; }
+    .skeleton-line-last { width: 70%; }
+
+    @keyframes skeleton-loading {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+
+    .narrator-error {
+      font-size: 11px;
+      color: rgba(255,120,100,0.9);
+      margin-top: 4px;
+      font-style: italic;
+    }
   </style>
 </head>
 <body>
@@ -879,6 +1109,37 @@
         <button id="ranked-reset" class="clear-btn">Reset</button>
       </div>
     </div>
+
+    <!-- AI Narrator card -->
+    <div id="narrator-card" class="narrator-card" style="display:none;">
+      <div class="narrator-header">
+        <div class="narrator-label">
+          <span class="narrator-sparkle">✦</span>
+          AI Travel Insight
+        </div>
+        <button id="narrator-refresh" class="narrator-refresh" title="Regenerate">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="23 4 23 10 17 10"/>
+            <polyline points="1 20 1 14 7 14"/>
+            <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+          </svg>
+          Refresh
+        </button>
+      </div>
+      <div id="narrator-text" class="narrator-text"></div>
+      <div id="narrator-error" class="narrator-error" style="display:none;"></div>
+    </div>
+
+    <!-- Generate button (shown when no narrative yet) -->
+    <div id="narrator-generate-wrap" style="display:none; padding: 8px 8px 4px;">
+      <button id="narrator-generate-btn" class="narrator-generate-btn">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+        </svg>
+        Analyse my travel intent
+      </button>
+    </div>
+
     <div id="ranked-empty" class="empty-state" style="display:none;">
       <p>Keep scrolling — Roam is learning<br/>what destinations interest you.</p>
     </div>

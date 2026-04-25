@@ -15,12 +15,12 @@ const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models
 
 const DETECTION_PROMPT = `You are a JSON API. Output ONLY a JSON object, nothing else.
 
-Task: identify travel destinations in this social media post. Read any place names from the image text overlay.
+Task: identify travel destinations in this social media post. The screenshot is your primary source — read any visible location names, overlays, captions, and scenery. The post text below is supplementary context and may be empty.
 
 Example output: {"isTravel":true,"destinations":[{"destination":"Paris","country":"France","countryCode":"FR","airportCode":"CDG","vibes":["Romantic"]}]}
 No travel: {"isTravel":false,"destinations":[]}
 
-Post caption: `;
+Post text (supplementary): `;
 
 // --- Settings ---
 
@@ -165,8 +165,132 @@ async function detectTravel(
 
 const SKYSCANNER_BASE =
   "https://partners.api.skyscanner.net/apiservices/v3/flights/live/search";
-const MAX_POLLS = 5;
+const BASE_POLLS = 5;
+const MAX_POLLS_CAP = 20;
 const POLL_DELAY_MS = 2000;
+
+/**
+ * Dynamic poll budget: base 5 polls + 1 extra for every 5 s of dwell the user
+ * spent watching content about this destination (capped at 20).
+ * More genuine interest → more polling attempts → higher chance of a complete result.
+ */
+function maxPollsForDwell(totalDwellMs: number): number {
+  const extraBuckets = Math.floor(totalDwellMs / 5000);
+  return Math.min(BASE_POLLS + extraBuckets, MAX_POLLS_CAP);
+}
+
+// Main hub airport per country — used when a single post mentions multiple places in the same country.
+const COUNTRY_HUB: Record<string, { airportCode: string; city: string }> = {
+  AD: { airportCode: 'BCN', city: 'Barcelona (for Andorra)' },
+  AE: { airportCode: 'DXB', city: 'Dubai, UAE' },
+  AR: { airportCode: 'EZE', city: 'Buenos Aires, Argentina' },
+  AT: { airportCode: 'VIE', city: 'Vienna, Austria' },
+  AU: { airportCode: 'SYD', city: 'Sydney, Australia' },
+  BA: { airportCode: 'SJJ', city: 'Sarajevo, Bosnia' },
+  BE: { airportCode: 'BRU', city: 'Brussels, Belgium' },
+  BG: { airportCode: 'SOF', city: 'Sofia, Bulgaria' },
+  BR: { airportCode: 'GRU', city: 'São Paulo, Brazil' },
+  CA: { airportCode: 'YYZ', city: 'Toronto, Canada' },
+  CH: { airportCode: 'ZRH', city: 'Zurich, Switzerland' },
+  CL: { airportCode: 'SCL', city: 'Santiago, Chile' },
+  CN: { airportCode: 'PEK', city: 'Beijing, China' },
+  CO: { airportCode: 'BOG', city: 'Bogotá, Colombia' },
+  CR: { airportCode: 'SJO', city: 'San José, Costa Rica' },
+  CZ: { airportCode: 'PRG', city: 'Prague, Czech Republic' },
+  DE: { airportCode: 'FRA', city: 'Frankfurt, Germany' },
+  DK: { airportCode: 'CPH', city: 'Copenhagen, Denmark' },
+  EG: { airportCode: 'CAI', city: 'Cairo, Egypt' },
+  ES: { airportCode: 'MAD', city: 'Madrid, Spain' },
+  FI: { airportCode: 'HEL', city: 'Helsinki, Finland' },
+  FR: { airportCode: 'CDG', city: 'Paris, France' },
+  GB: { airportCode: 'LHR', city: 'London, United Kingdom' },
+  GR: { airportCode: 'ATH', city: 'Athens, Greece' },
+  HR: { airportCode: 'ZAG', city: 'Zagreb, Croatia' },
+  HU: { airportCode: 'BUD', city: 'Budapest, Hungary' },
+  ID: { airportCode: 'CGK', city: 'Jakarta, Indonesia' },
+  IE: { airportCode: 'DUB', city: 'Dublin, Ireland' },
+  IL: { airportCode: 'TLV', city: 'Tel Aviv, Israel' },
+  IN: { airportCode: 'DEL', city: 'New Delhi, India' },
+  IS: { airportCode: 'KEF', city: 'Reykjavík, Iceland' },
+  IT: { airportCode: 'FCO', city: 'Rome, Italy' },
+  JP: { airportCode: 'NRT', city: 'Tokyo, Japan' },
+  KR: { airportCode: 'ICN', city: 'Seoul, South Korea' },
+  MA: { airportCode: 'CMN', city: 'Casablanca, Morocco' },
+  MX: { airportCode: 'MEX', city: 'Mexico City, Mexico' },
+  MY: { airportCode: 'KUL', city: 'Kuala Lumpur, Malaysia' },
+  NL: { airportCode: 'AMS', city: 'Amsterdam, Netherlands' },
+  NO: { airportCode: 'OSL', city: 'Oslo, Norway' },
+  NZ: { airportCode: 'AKL', city: 'Auckland, New Zealand' },
+  PE: { airportCode: 'LIM', city: 'Lima, Peru' },
+  PH: { airportCode: 'MNL', city: 'Manila, Philippines' },
+  PL: { airportCode: 'WAW', city: 'Warsaw, Poland' },
+  PT: { airportCode: 'LIS', city: 'Lisbon, Portugal' },
+  RO: { airportCode: 'OTP', city: 'Bucharest, Romania' },
+  RS: { airportCode: 'BEG', city: 'Belgrade, Serbia' },
+  SE: { airportCode: 'ARN', city: 'Stockholm, Sweden' },
+  SG: { airportCode: 'SIN', city: 'Singapore' },
+  SK: { airportCode: 'BTS', city: 'Bratislava, Slovakia' },
+  TH: { airportCode: 'BKK', city: 'Bangkok, Thailand' },
+  TR: { airportCode: 'IST', city: 'Istanbul, Turkey' },
+  TW: { airportCode: 'TPE', city: 'Taipei, Taiwan' },
+  US: { airportCode: 'JFK', city: 'New York, USA' },
+  VN: { airportCode: 'SGN', city: 'Ho Chi Minh City, Vietnam' },
+  ZA: { airportCode: 'JNB', city: 'Johannesburg, South Africa' },
+};
+
+/**
+ * If a single post mentions 2+ places in the same country, collapse them into
+ * one entry using the country's main hub airport. Vibes are merged from all hits.
+ */
+function consolidateByCountry(hits: DestinationHit[]): DestinationHit[] {
+  const byCountry = new Map<string, DestinationHit[]>();
+  for (const hit of hits) {
+    const code = hit.countryCode.toUpperCase();
+    if (!byCountry.has(code)) byCountry.set(code, []);
+    byCountry.get(code)!.push(hit);
+  }
+
+  const result: DestinationHit[] = [];
+  for (const [countryCode, countryHits] of byCountry) {
+    const hub = COUNTRY_HUB[countryCode];
+    const mergedVibes = [...new Set(countryHits.flatMap((h) => h.vibes))].slice(0, 3);
+    const individualNames = countryHits.map((h) => h.destination);
+
+    if (countryHits.length === 1) {
+      const hit = countryHits[0];
+      // If single hit is missing airportCode, try to fill from hub
+      if (!hit.airportCode && hub) {
+        result.push({
+          ...hit,
+          airportCode: hub.airportCode,
+          vibes: mergedVibes,
+        });
+        console.log(`[Roam BG] Single hit ${hit.destination} missing IATA, using hub ${hub.airportCode}`);
+      } else {
+        result.push({ ...hit, vibes: mergedVibes });
+      }
+      continue;
+    }
+
+    // Multiple destinations in one country — consolidate to hub airport
+    const consolidated: DestinationHit & { mergedLocations?: string[] } = hub
+      ? {
+          destination: hub.city,
+          country: countryHits[0].country,
+          countryCode,
+          airportCode: hub.airportCode,
+          vibes: mergedVibes,
+          mergedLocations: individualNames,
+        }
+      : { ...countryHits[0], vibes: mergedVibes, mergedLocations: individualNames };
+    
+    console.log(
+      `[Roam BG] Consolidated ${countryHits.length} ${countryCode} destinations (${countryHits.map((h) => h.destination).join(", ")}) → ${consolidated.airportCode}`
+    );
+    result.push(consolidated);
+  }
+  return result;
+}
 
 function buildSkyscannerQuery(homeAirport: string, destAirport: string, currency: string = "EUR") {
   return {
@@ -191,7 +315,8 @@ async function searchFlights(
   destAirport: string,
   homeAirport: string,
   apiKey: string,
-  currency: string = "EUR"
+  currency: string = "EUR",
+  maxPolls: number = BASE_POLLS
 ): Promise<FlightResult | null> {
   if (!apiKey) return null;
 
@@ -211,7 +336,7 @@ async function searchFlights(
     const sessionToken = data.sessionToken;
     let polls = 0;
 
-    while (data.status === "RESULT_STATUS_INCOMPLETE" && polls < MAX_POLLS && sessionToken) {
+    while (data.status === "RESULT_STATUS_INCOMPLETE" && polls < maxPolls && sessionToken) {
       await new Promise((r) => setTimeout(r, POLL_DELAY_MS));
       polls++;
       const pollRes = await fetch(`${SKYSCANNER_BASE}/poll/${sessionToken}`, {
@@ -223,6 +348,7 @@ async function searchFlights(
       data = await pollRes.json();
     }
 
+    console.log(`[Roam BG] Skyscanner polled ${polls}/${maxPolls} times for ${destAirport}`);
     return parseSkyscannerResult(data, homeAirport, destAirport, currency);
   } catch (e) {
     console.warn("[Roam BG] Skyscanner fetch failed:", e);
@@ -352,13 +478,78 @@ async function addDetection(
     flight: flight ?? existing?.flight ?? null,
     sourceUrl,
     detectedAt: Date.now(),
+    // Carry mergedLocations if the hit was already consolidated (per-post consolidation)
+    mergedLocations: (hit as any).mergedLocations ?? existing?.mergedLocations,
   };
 
   if (existingIdx >= 0) detections.splice(existingIdx, 1);
   detections.unshift(entry);
   if (detections.length > MAX_DETECTIONS) detections.length = MAX_DETECTIONS;
 
-  await chrome.storage.local.set({ detections });
+  // Cross-post consolidation: if the feed now has 2+ entries for the same country,
+  // merge them all into one hub-airport entry (cheapest flight wins, vibes merged).
+  const consolidated = consolidateFeed(detections);
+  await chrome.storage.local.set({ detections: consolidated });
+}
+
+/**
+ * Scans the full detections feed. Any country with 2+ entries is collapsed into
+ * a single hub-airport entry. The position of the first (most-recent) occurrence
+ * is preserved. The cheapest flight across all entries is kept.
+ */
+function consolidateFeed(detections: DetectedEntry[]): DetectedEntry[] {
+  // Group indices by countryCode
+  const byCountry = new Map<string, number[]>();
+  for (let i = 0; i < detections.length; i++) {
+    const code = detections[i].countryCode?.toUpperCase();
+    if (!code) continue;
+    if (!byCountry.has(code)) byCountry.set(code, []);
+    byCountry.get(code)!.push(i);
+  }
+
+  // Collect indices to remove (all but the first occurrence per country group)
+  const toRemove = new Set<number>();
+
+  for (const [countryCode, indices] of byCountry) {
+    if (indices.length < 2) continue;
+
+    const hub = COUNTRY_HUB[countryCode];
+    const group = indices.map((i) => detections[i]);
+
+    // Pick cheapest flight across the group
+    const cheapest = group
+      .map((d) => d.flight)
+      .filter(Boolean)
+      .sort((a, b) => (a!.price ?? Infinity) - (b!.price ?? Infinity))[0] ?? null;
+
+    const mergedVibes = [...new Set(group.flatMap((d) => d.vibes))].slice(0, 3);
+
+    // Overwrite the first (most-recent) entry with the consolidated version
+    const primary = detections[indices[0]];
+    // Collect all individual location names (expand any already-merged entries)
+    const allNames = [...new Set(
+      group.flatMap((d) => d.mergedLocations?.length ? d.mergedLocations : [d.destination])
+    )];
+    detections[indices[0]] = {
+      ...primary,
+      destination: hub?.city ?? primary.destination,
+      airportCode: hub?.airportCode ?? primary.airportCode,
+      vibes: mergedVibes,
+      flight: cheapest,
+      mergedLocations: allNames,
+    };
+
+    // Mark the rest for removal
+    for (let i = 1; i < indices.length; i++) {
+      toRemove.add(indices[i]);
+    }
+
+    console.log(
+      `[Roam BG] Feed consolidated ${group.length} ${countryCode} entries → ${hub?.airportCode ?? primary.airportCode}, cheapest: ${cheapest?.price ?? "none"}`
+    );
+  }
+
+  return detections.filter((_, i) => !toRemove.has(i));
 }
 
 async function addLoading(destinations: string[]): Promise<void> {
@@ -415,6 +606,17 @@ async function processDestination(
 ): Promise<void> {
   const airportCode = hit.airportCode;
 
+  if (!airportCode) {
+    console.warn(`[Roam BG] Skipping ${hit.destination} — no airport code available`);
+    const { detections = [] } = await chrome.storage.local.get("detections") as { detections: DetectedEntry[] };
+    const filtered = detections.filter(
+      (d) => d.destination.toLowerCase() !== hit.destination.toLowerCase()
+    );
+    await chrome.storage.local.set({ detections: filtered });
+    await removeLoading(hit.destination);
+    return;
+  }
+
   // Check cache first — no slot needed
   if (flightCache.has(airportCode)) {
     const cachedFlight = flightCache.get(airportCode) ?? null;
@@ -422,6 +624,19 @@ async function processDestination(
     await removeLoading(hit.destination);
     return;
   }
+
+  // Compute dwell-based poll budget from the engagement log
+  const { engagementLog = [] } = await chrome.storage.local.get("engagementLog") as { engagementLog: EngagementEvent[] };
+  const totalDwellMs = engagementLog
+    .filter(
+      (e) =>
+        e.destination.toLowerCase() === hit.destination.toLowerCase() &&
+        e.eventType === "dwell" &&
+        typeof e.duration === "number"
+    )
+    .reduce((sum, e) => sum + (e.duration ?? 0), 0);
+  const maxPolls = maxPollsForDwell(totalDwellMs);
+  console.log(`[Roam BG] ${hit.destination}: ${Math.round(totalDwellMs / 1000)}s dwell → ${maxPolls} max polls`);
 
   // Wait for a slot
   await acquireFlightSlot();
@@ -437,7 +652,8 @@ async function processDestination(
       airportCode,
       settings.HOME_AIRPORT || "BCN",
       settings.SKYSCANNER_API_KEY,
-      settings.CURRENCY || "EUR"
+      settings.CURRENCY || "EUR",
+      maxPolls
     );
 
     flightCache.set(airportCode, flight);
@@ -490,13 +706,13 @@ async function processRequest(message: ContentPayload, windowId: number | undefi
       .filter(Boolean)
       .join(" ");
 
-    // Without a screenshot, different slides of the same post have identical input — skip
-    if (!screenshot && message.slideIndex > 0) {
-      console.log(`[Roam BG] Skipping slide ${message.slideIndex} (no screenshot, same text as slide 0)`);
+    // If there's no screenshot and no text at all, nothing to send
+    if (!screenshot && !fullText.trim()) {
+      console.log(`[Roam BG] Skipping — no screenshot and no text for slide ${message.slideIndex}`);
       return;
     }
 
-    console.log(`[Roam BG] Processing (${message.trigger}, slide ${message.slideIndex}):`, fullText.slice(0, 60), screenshot ? "+ img" : "");
+    console.log(`[Roam BG] Processing (${message.trigger}, slide ${message.slideIndex}):`, fullText.slice(0, 60) || "(no caption)", screenshot ? "+ screenshot" : "text-only");
 
     await acquireDetectionSlot();
     let detection: DetectionResult;
@@ -514,32 +730,36 @@ async function processRequest(message: ContentPayload, windowId: number | undefi
     // Deduplicate by airport code (same airport = same destination)
     const seen = new Set<string>();
     const hits = detection.destinations.filter((h) => {
-      const key = h.airportCode.toUpperCase();
+      // Handle cases where Gemma might not provide an airportCode
+      const key = (h.airportCode || h.destination).toUpperCase();
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
     });
-    // If more than 5 destinations from a single slide, it's likely a list/compilation post — skip
-    if (hits.length > 5) {
+    // If more than 15 destinations from a single slide, it's likely a list/compilation post — skip
+    if (hits.length > 15) {
       console.log(`[Roam BG] Skipping — too many destinations (${hits.length}), likely a list post`);
       return;
     }
-    console.log(`[Roam BG] Detected ${hits.length} destination(s):`, hits.map((h) => h.destination).join(", "));
+
+    // Consolidate multiple places in the same country into one hub-airport entry
+    const consolidatedHits = consolidateByCountry(hits);
+    console.log(`[Roam BG] Detected ${consolidatedHits.length} destination(s):`, consolidatedHits.map((h) => h.destination).join(", "));
 
     // Register post+slide → destination mapping for engagement tracking
-    registerPostDestinations(message.postId, message.slideIndex, hits);
+    registerPostDestinations(message.postId, message.slideIndex, consolidatedHits);
 
     // Add all to feed immediately (no flight data yet)
-    for (const hit of hits) {
+    for (const hit of consolidatedHits) {
       await addDetection(hit, null, message.pageUrl);
     }
 
     // Mark all as loading
-    await addLoading(hits.map((h) => h.destination));
+    await addLoading(consolidatedHits.map((h) => h.destination));
 
     // Fire all flight searches — global semaphore limits to 5 concurrent
     await Promise.all(
-      hits.map((hit) => processDestination(hit, message.pageUrl, settings))
+      consolidatedHits.map((hit) => processDestination(hit, message.pageUrl, settings))
     );
   } catch (err) {
     console.error("[Roam BG] Error:", err);
@@ -640,9 +860,19 @@ async function handleEngagementEvent(msg: {
   // Recompute scores
   const { interestScores = [] } = await chrome.storage.local.get("interestScores") as { interestScores: InterestScore[] };
 
+  // Normalize engagement log: if a destination matches a country name or code, 
+  // map it to the current hub name to preserve scoring across name changes.
+  const normalizedLog = trimmed.map(e => {
+    const hub = COUNTRY_HUB[e.countryCode.toUpperCase()];
+    if (hub && (e.destination === e.countryCode || e.destination.toLowerCase() === hub.city.toLowerCase().split(',')[1]?.trim().toLowerCase())) {
+      return { ...e, destination: hub.city };
+    }
+    return e;
+  });
+
   // Enrich scores with country/flight data from detections
   const { detections = [] } = await chrome.storage.local.get("detections") as { detections: DetectedEntry[] };
-  const scores = computeScores(trimmed, interestScores);
+  const scores = computeScores(normalizedLog, interestScores);
 
   // Fill in country and flight data from detections (always use latest)
   for (const score of scores) {
@@ -654,6 +884,7 @@ async function handleEngagementEvent(msg: {
       if (!score.country) score.country = match.country;
       if (!score.airportCode) score.airportCode = match.airportCode;
       if (match.flight) score.flight = match.flight;
+      if (match.mergedLocations) score.mergedLocations = match.mergedLocations;
     }
   }
 

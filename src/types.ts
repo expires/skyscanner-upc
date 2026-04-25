@@ -30,6 +30,7 @@ export interface DetectedEntry {
   flight: FlightResult | null;
   sourceUrl: string;
   detectedAt: number;
+  mergedLocations?: string[]; // individual place names when this entry represents multiple consolidated spots
 }
 
 export interface WishlistEntry {
@@ -103,6 +104,7 @@ export interface InterestScore {
     postCount: number;
   };
   flight: FlightResult | null;
+  mergedLocations?: string[];
   lastUpdated: number;
 }
 
