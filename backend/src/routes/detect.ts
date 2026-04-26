@@ -39,7 +39,7 @@ function extractJson(text: string): any | null {
   const partial = text.slice(start);
   const lastComplete = partial.lastIndexOf("},");
   if (lastComplete > 0) {
-    try { return JSON.parse(partial.slice(0, lastComplete + 1) + "]}"); } catch {}
+    try { return JSON.parse(partial.slice(0, lastComplete + 1) + "]}"); } catch { }
   }
   return null;
 }
@@ -47,7 +47,7 @@ function extractJson(text: string): any | null {
 router.post('/', requireDeviceId, async (req, res) => {
   const { text, screenshot, postId, platform } = req.body;
   const apiKey = process.env.GEMINI_API_KEY;
-  
+
   if (!apiKey) {
     return res.status(500).json({ error: "Missing GEMINI_API_KEY in backend" });
   }
@@ -78,7 +78,7 @@ router.post('/', requireDeviceId, async (req, res) => {
     if (result) {
       return res.json(result);
     }
-    
+
     return res.json({ isTravel: false, destinations: [] });
   } catch (err: any) {
     console.error("[Backend] Detect error:", err.message);
