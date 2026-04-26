@@ -92,7 +92,7 @@ async function detectTravel(
   platform: 'instagram' | 'tiktok'
 ): Promise<DetectionResult> {
   const deviceId = await getDeviceId();
-  
+
   const response = await fetch(`${CONFIG.BACKEND_URL}/detect`, {
     method: "POST",
     headers: {
@@ -195,7 +195,7 @@ const COUNTRY_HUB: Record<string, { airportCode: string; city: string }> = {
 function consolidateByCountry(hits: DestinationHit[]): DestinationHit[] {
   // Countries that are too large to consolidate (cities > 2 hours apart)
   const NO_CONSOLIDATION = new Set(['US', 'CA', 'AU', 'BR', 'RU', 'CN', 'IN', 'MX', 'AR']);
-  
+
   const byCountry = new Map<string, DestinationHit[]>();
   const result: DestinationHit[] = [];
 
@@ -234,15 +234,15 @@ function consolidateByCountry(hits: DestinationHit[]): DestinationHit[] {
     // Multiple destinations in one country — consolidate to hub airport
     const consolidated: DestinationHit & { mergedLocations?: string[] } = hub
       ? {
-          destination: hub.city,
-          country: countryHits[0].country,
-          countryCode,
-          airportCode: hub.airportCode,
-          vibes: mergedVibes,
-          mergedLocations: individualNames,
-        }
+        destination: hub.city,
+        country: countryHits[0].country,
+        countryCode,
+        airportCode: hub.airportCode,
+        vibes: mergedVibes,
+        mergedLocations: individualNames,
+      }
       : { ...countryHits[0], vibes: mergedVibes, mergedLocations: individualNames };
-    
+
     console.log(
       `[Roam BG] Consolidated ${countryHits.length} ${countryCode} destinations (${countryHits.map((h) => h.destination).join(", ")}) → ${consolidated.airportCode}`
     );
@@ -649,23 +649,16 @@ interface OrphanEvent {
 const orphanEvents: OrphanEvent[] = [];
 
 function registerPostDestinations(postId: string, slideIndex: number, hits: DestinationHit[]): void {
-  // Map each hit to this postId:slideIndex — first hit is primary for engagement
-  // Also register all hits so multiple destinations from one slide get mapped
-  for (let i = 0; i < hits.length; i++) {
-    const key = i === 0
-      ? postSlideKey(postId, slideIndex)
-      : postSlideKey(postId, slideIndex) + `:${i}`;
-    if (!postSlideMap.has(postSlideKey(postId, slideIndex))) {
-      postSlideMap.set(postSlideKey(postId, slideIndex), {
-        destination: hits[0].destination,
-        countryCode: hits[0].countryCode,
-        country: hits[0].country,
-      });
-    }
-  }
+  const psKey = postSlideKey(postId, slideIndex);
+  
+  // Always update the map — later detections on the same slide are more accurate
+  postSlideMap.set(psKey, {
+    destination: hits[0].destination,
+    countryCode: hits[0].countryCode,
+    country: hits[0].country ?? "",
+  });
 
   // Drain any orphan events that were waiting for this postId:slideIndex
-  const psKey = postSlideKey(postId, slideIndex);
   const pending = orphanEvents.filter((e) => postSlideKey(e.postId, e.slideIndex) === psKey);
   if (pending.length > 0) {
     console.log(`[Roam BG] Draining ${pending.length} orphan event(s) for ${hits[0].destination}`);
@@ -731,21 +724,25 @@ async function handleEngagementEvent(msg: {
     return e;
   });
 
-  // Enrich scores with country/flight data from detections
+  // Enrich scores with country/flight data from detections or event metadata
   const { detections = [] } = await chrome.storage.local.get("detections") as { detections: DetectedEntry[] };
   const scores = computeScores(normalizedLog, interestScores);
 
-  // Fill in country and flight data from detections (always use latest)
+  // Fill in country and flight data — fall back to dest metadata when detections are cleared
   for (const score of scores) {
     const match = detections.find((d) =>
       d.destination.toLowerCase() === score.destination.toLowerCase() ||
       (d.airportCode && d.airportCode === score.airportCode)
     );
     if (match) {
-      if (!score.country) score.country = match.country;
-      if (!score.airportCode) score.airportCode = match.airportCode;
+      score.country = match.country || score.country;
+      score.airportCode = score.airportCode || match.airportCode;
       if (match.flight) score.flight = match.flight;
       if (match.mergedLocations) score.mergedLocations = match.mergedLocations;
+    } else {
+      // No live detection — fill from the dest metadata so score stays visible
+      score.country = score.country || dest.country;
+      score.countryCode = score.countryCode || dest.countryCode;
     }
   }
 
@@ -762,9 +759,21 @@ async function handleEngagementEvent(msg: {
   console.log(`[Roam BG] Engagement: ${msg.eventType} for ${dest.destination} (score: ${scores.find(s => s.destination === dest.destination)?.score ?? 0})`);
 }
 
+
+// Listen for feed clear from popup
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && changes.detections) {
+    if (Array.isArray(changes.detections.newValue) && changes.detections.newValue.length === 0) {
+      processedSlides.clear();
+      flightCache.clear();
+      console.log("[Roam BG] Feed cleared locally, resetting processed caches to allow re-detection.");
+    }
+  }
+});
+
 async function syncEngagementToBackend(event: EngagementEvent, scores: InterestScore[]): Promise<void> {
   const deviceId = await getDeviceId();
-  
+
   // 1. Sync event
   await fetch(`${CONFIG.BACKEND_URL}/events`, {
     method: "POST",

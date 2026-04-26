@@ -582,22 +582,22 @@ function formatDwell(ms: number): string {
 async function renderRanked(): Promise<void> {
   const { interestScores = [], detections = [] } = await chrome.storage.local.get(["interestScores", "detections"]) as { interestScores: InterestScore[], detections: DetectedEntry[] };
 
-  // Live-merge latest flight and location data from detections
-  // because engagement events often happen before flight searches finish
-  const validScores: InterestScore[] = [];
+  // Enrich scores with latest flight/country data from detections where available,
+  // but always display all scores — intent data is independent of the live feed.
   for (const score of interestScores) {
     const match = detections.find((d) =>
       d.destination.toLowerCase() === score.destination.toLowerCase() ||
       (d.airportCode && d.airportCode === score.airportCode)
     );
     if (match) {
-      if (!score.country) score.country = match.country;
-      if (!score.airportCode) score.airportCode = match.airportCode;
+      score.country = match.country || score.country;
+      score.airportCode = score.airportCode || match.airportCode;
       if (match.flight) score.flight = match.flight;
       if (match.mergedLocations) score.mergedLocations = match.mergedLocations;
-      validScores.push(score);
     }
   }
+
+  const validScores = interestScores.filter((s) => s.rawScore > 0);
 
   if (validScores.length === 0) {
     rankedEmpty.style.display = "block";
